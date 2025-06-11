@@ -1,0 +1,151 @@
+import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { Pinecone } from '@pinecone-database/pinecone';
+import { Index, RecordMetadata } from '@pinecone-database/pinecone';
+
+export interface PineconeVector {
+  id: string;
+  values: number[];
+  metadata?: RecordMetadata;
+}
+
+export interface PineconeQueryResult {
+  id: string;
+  score: number;
+  metadata?: RecordMetadata;
+}
+
+@Injectable()
+export class PineconeService implements OnModuleInit {
+  private readonly logger = new Logger(PineconeService.name);
+  private pinecone: Pinecone;
+  private index: Index;
+
+  constructor(private readonly configService: ConfigService) {}
+
+  async onModuleInit() {
+    await this.initializePinecone();
+  }
+
+  private async initializePinecone() {
+    try {
+      this.pinecone = new Pinecone({
+        apiKey: this.configService.get<string>('PINECONE_API_KEY'),
+      });
+
+      const indexName = this.configService.get<string>('PINECONE_INDEX_NAME');
+      this.index = this.pinecone.index(indexName);
+
+      this.logger.log('Pinecone client initialized successfully');
+    } catch (error) {
+      this.logger.error('Failed to initialize Pinecone client', error);
+      throw error;
+    }
+  }
+
+  async upsertVectors(
+    vectors: PineconeVector[],
+    namespace?: string,
+  ): Promise<void> {
+    try {
+      await this.index.namespace(namespace || '').upsert(vectors);
+      this.logger.log(`Upserted ${vectors.length} vectors to Pinecone`);
+    } catch (error) {
+      this.logger.error('Failed to upsert vectors to Pinecone', error);
+      throw error;
+    }
+  }
+
+  async queryVectors(
+    vector: number[],
+    options: {
+      topK?: number;
+      filter?: Record<string, any>;
+      namespace?: string;
+      includeMetadata?: boolean;
+    } = {},
+  ): Promise<PineconeQueryResult[]> {
+    try {
+      const {
+        topK = 10,
+        filter = {},
+        namespace = '',
+        includeMetadata = true,
+      } = options;
+
+      const queryResponse = await this.index.namespace(namespace).query({
+        vector,
+        topK,
+        filter,
+        includeMetadata,
+      });
+
+      return queryResponse.matches.map((match) => ({
+        id: match.id,
+        score: match.score || 0,
+        metadata: match.metadata,
+      }));
+    } catch (error) {
+      this.logger.error('Failed to query vectors from Pinecone', error);
+      throw error;
+    }
+  }
+
+  async deleteVectors(
+    ids: string[],
+    namespace?: string,
+  ): Promise<void> {
+    try {
+      await this.index.namespace(namespace || '').deleteMany(ids);
+      this.logger.log(`Deleted ${ids.length} vectors from Pinecone`);
+    } catch (error) {
+      this.logger.error('Failed to delete vectors from Pinecone', error);
+      throw error;
+    }
+  }
+
+  async deleteByFilter(
+    filter: Record<string, any>,
+    namespace?: string,
+  ): Promise<void> {
+    try {
+      await this.index.namespace(namespace || '').deleteMany({ filter });
+      this.logger.log('Deleted vectors by filter from Pinecone');
+    } catch (error) {
+      this.logger.error('Failed to delete vectors by filter from Pinecone', error);
+      throw error;
+    }
+  }
+
+  async describeIndex(): Promise<any> {
+    try {
+      const indexName = this.configService.get<string>('PINECONE_INDEX_NAME');
+      return await this.pinecone.describeIndex(indexName);
+    } catch (error) {
+      this.logger.error('Failed to describe Pinecone index', error);
+      throw error;
+    }
+  }
+
+  async getIndexStats(namespace?: string): Promise<any> {
+    try {
+      return await this.index.namespace(namespace || '').describeIndexStats();
+    } catch (error) {
+      this.logger.error('Failed to get index stats', error);
+      throw error;
+    }
+  }
+
+  async fetchVectors(
+    ids: string[],
+    namespace?: string,
+  ): Promise<Record<string, any>> {
+    try {
+      const response = await this.index.namespace(namespace || '').fetch(ids);
+      return response.records || {};
+    } catch (error) {
+      this.logger.error('Failed to fetch vectors from Pinecone', error);
+      throw error;
+    }
+  }
+}
