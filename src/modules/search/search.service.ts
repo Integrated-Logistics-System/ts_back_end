@@ -117,7 +117,7 @@ export class SearchService {
 
         for (const recipe of recipeResults.recipes) {
           results.push({
-            id: recipe._id.toString(),
+            id: (recipe._id as any).toString(),
             type: 'recipe',
             title: recipe.name,
             description: recipe.description,

@@ -152,7 +152,11 @@ export class RecipeService {
     allergens: Record<string, number>;
     note?: string;
   }[]> {
-    const allergenResults = [];
+    const allergenResults: {
+      ingredient: string;
+      allergens: Record<string, number>;
+      note?: string;
+    }[] = [];
 
     for (const ingredient of ingredients) {
       const allergenInfo = await this.allergenModel
@@ -366,7 +370,7 @@ export class RecipeService {
       await this.vectorService.createVector({
         content,
         sourceType: VectorSourceType.RECIPE,
-        sourceId: recipe._id.toString(),
+        sourceId: (recipe._id as any).toString(),
         metadata,
         namespace: 'recipes',
       });
@@ -446,5 +450,209 @@ export class RecipeService {
 
     this.logger.log(`Allergen bulk insert completed: ${success} success, ${failed} failed`);
     return { success, failed };
+  }
+
+  async update(
+    id: string,
+    updateRecipeDto: UpdateRecipeDto,
+  ): Promise<RecipeDocument> {
+    try {
+      const recipe = await this.recipeModel
+        .findByIdAndUpdate(id, updateRecipeDto, { new: true })
+        .exec();
+
+      if (!recipe) {
+        throw new NotFoundException(`Recipe with ID ${id} not found`);
+      }
+
+      // Update vector if content has changed
+      await this.updateRecipeVector(recipe);
+
+      this.logger.log(`Updated recipe ${id} with vector embedding`);
+      return recipe;
+    } catch (error) {
+      this.logger.error(`Failed to update recipe ${id} with vector`, error);
+      throw error;
+    }
+  }
+
+  async remove(id: string): Promise<void> {
+    try {
+      const result = await this.recipeModel.findByIdAndDelete(id).exec();
+      if (!result) {
+        throw new NotFoundException(`Recipe with ID ${id} not found`);
+      }
+
+      // Delete associated vectors
+      await this.vectorService.deleteVectorsBySource(
+        VectorSourceType.RECIPE,
+        id,
+      );
+
+      this.logger.log(`Deleted recipe ${id} and associated vectors`);
+    } catch (error) {
+      this.logger.error(`Failed to delete recipe ${id} with vectors`, error);
+      throw error;
+    }
+  }
+
+  async updateRating(id: string, rating: number): Promise<RecipeDocument> {
+    const recipe = await this.findById(id);
+
+    const newReviewCount = recipe.reviewCount + 1;
+    const newAverageRating =
+      (recipe.averageRating * recipe.reviewCount + rating) / newReviewCount;
+
+    const updatedRecipe = await this.recipeModel
+      .findByIdAndUpdate(
+        id,
+        {
+          averageRating: Math.round(newAverageRating * 10) / 10,
+          reviewCount: newReviewCount,
+        },
+        { new: true },
+      )
+      .exec();
+
+    if (!updatedRecipe) {
+      throw new NotFoundException(`Recipe with ID ${id} not found`);
+    }
+
+    // Update vector metadata with new rating
+    await this.updateRecipeVector(updatedRecipe);
+
+    return updatedRecipe;
+  }
+
+  async getPopularRecipes(limit: number = 10): Promise<RecipeDocument[]> {
+    return this.recipeModel
+      .find()
+      .sort({ averageRating: -1, reviewCount: -1 })
+      .limit(limit)
+      .exec();
+  }
+
+  async getRecentRecipes(limit: number = 10): Promise<RecipeDocument[]> {
+    return this.recipeModel.find().sort({ createdAt: -1 }).limit(limit).exec();
+  }
+
+  async findSimilarRecipes(
+    recipeId: string,
+    limit: number = 5,
+  ): Promise<RecipeDocument[]> {
+    try {
+      const recipe = await this.findById(recipeId);
+
+      // Create search query from recipe content
+      const searchQuery = this.buildRecipeSearchQuery(recipe);
+
+      // Search for similar vectors
+      const vectorResults = await this.vectorService.searchVectors({
+        query: searchQuery,
+        topK: limit + 1, // +1 to exclude the original recipe
+        threshold: 0.6,
+        filter: {
+          sourceType: VectorSourceType.RECIPE,
+          sourceId: { $ne: recipeId }, // Exclude the original recipe
+        },
+        namespace: 'recipes',
+        includeMetadata: true,
+        includeContent: false,
+      });
+
+      // Fetch similar recipes
+      const similarRecipes: RecipeDocument[] = [];
+      for (const result of vectorResults.slice(0, limit)) {
+        if (result.sourceId && result.sourceId !== recipeId) {
+          try {
+            const similarRecipe = await this.recipeModel
+              .findById(result.sourceId)
+              .exec();
+            if (similarRecipe) {
+              similarRecipes.push(similarRecipe);
+            }
+          } catch (error) {
+            this.logger.warn(`Similar recipe ${result.sourceId} not found`);
+          }
+        }
+      }
+
+      return similarRecipes;
+    } catch (error) {
+      this.logger.error(
+        `Failed to find similar recipes for ${recipeId}`,
+        error,
+      );
+      // Fallback to traditional similar recipe logic
+      return this.findSimilarRecipesFallback(recipeId, limit);
+    }
+  }
+
+  private async findSimilarRecipesFallback(
+    recipeId: string,
+    limit: number,
+  ): Promise<RecipeDocument[]> {
+    const recipe = await this.findById(recipeId);
+
+    return this.recipeModel
+      .find({
+        _id: { $ne: recipeId },
+        $or: [
+          { ingredients: { $in: recipe.ingredients } },
+          { tags: { $in: recipe.tags } },
+          { cuisine: recipe.cuisine || '' },
+        ],
+      })
+      .sort({ averageRating: -1 })
+      .limit(limit)
+      .exec();
+  }
+
+  private async updateRecipeVector(recipe: RecipeDocument): Promise<void> {
+    try {
+      // Delete existing vectors for this recipe
+      await this.vectorService.deleteVectorsBySource(
+        VectorSourceType.RECIPE,
+        (recipe._id as any).toString(),
+      );
+
+      // Create new vector with updated content
+      await this.createRecipeVector(recipe);
+    } catch (error) {
+      this.logger.error(
+        `Failed to update vector for recipe ${recipe._id}`,
+        error,
+      );
+      // Don't throw error to prevent recipe update from failing
+    }
+  }
+
+  async reindexAllRecipes(): Promise<void> {
+    try {
+      this.logger.log('Starting recipe reindexing process...');
+
+      // Get all recipes
+      const recipes = await this.recipeModel.find().exec();
+
+      // Delete all existing recipe vectors
+      await this.vectorService.deleteVectorsBySource(VectorSourceType.RECIPE);
+
+      // Create vectors for all recipes
+      const vectorDtos = recipes.map((recipe) => ({
+        content: this.buildRecipeSearchQuery(recipe),
+        sourceType: VectorSourceType.RECIPE,
+        sourceId: (recipe._id as any).toString(),
+        metadata: this.buildRecipeMetadata(recipe),
+        namespace: 'recipes',
+      }));
+
+      // Bulk create vectors
+      await this.vectorService.bulkCreateVectors(vectorDtos);
+
+      this.logger.log(`Successfully reindexed ${recipes.length} recipes`);
+    } catch (error) {
+      this.logger.error('Failed to reindex recipes', error);
+      throw error;
+    }
   }
 }

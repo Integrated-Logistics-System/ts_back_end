@@ -1,44 +1,31 @@
-// @ts-check
-import eslint from '@eslint/js';
-import eslintPluginPrettierRecommended from 'eslint-plugin-prettier/recommended';
-import globals from 'globals';
-import tseslint from 'typescript-eslint';
+import js from '@eslint/js';
+import typescript from '@typescript-eslint/eslint-plugin';
+import typescriptParser from '@typescript-eslint/parser';
+import prettier from 'eslint-plugin-prettier';
 
-export default tseslint.config(
+export default [
+  js.configs.recommended,
   {
-    ignores: ['eslint.config.mjs', 'dist/**/*', 'node_modules/**/*'],
-  },
-  eslint.configs.recommended,
-  ...tseslint.configs.recommended,
-  eslintPluginPrettierRecommended,
-  {
+    files: ['**/*.ts'],
     languageOptions: {
-      globals: {
-        ...globals.node,
-        ...globals.jest,
-      },
-      sourceType: 'commonjs',
+      parser: typescriptParser,
       parserOptions: {
-        projectService: true,
-        tsconfigRootDir: import.meta.dirname,
+        project: 'tsconfig.json',
+        tsconfigRootDir: process.cwd(),
+        sourceType: 'module',
       },
     },
-  },
-  {
-    rules: {
-      '@typescript-eslint/no-explicit-any': 'off',
-      '@typescript-eslint/no-floating-promises': 'off',
-      '@typescript-eslint/no-unsafe-argument': 'off',
-      '@typescript-eslint/no-unsafe-assignment': 'off',
-      '@typescript-eslint/no-unsafe-member-access': 'off',
-      '@typescript-eslint/no-unsafe-call': 'off',
-      '@typescript-eslint/no-unsafe-return': 'off',
-      '@typescript-eslint/no-unused-vars': 'off', // 개발 중이므로 비활성화
-      '@typescript-eslint/require-await': 'off',
-      'no-useless-catch': 'off',
-      'prefer-const': 'error',
-      'no-var': 'error',
-      'no-console': 'off',
+    plugins: {
+      '@typescript-eslint': typescript,
+      prettier: prettier,
     },
+    rules: {
+      '@typescript-eslint/interface-name-prefix': 'off',
+      '@typescript-eslint/explicit-function-return-type': 'off',
+      '@typescript-eslint/explicit-module-boundary-types': 'off',
+      '@typescript-eslint/no-explicit-any': 'off',
+      'prettier/prettier': 'error',
+    },
+    ignores: ['dist/', 'node_modules/'],
   },
-);
+];

@@ -11,6 +11,15 @@ import {
 
 export class CreateRecipeDto {
   @ApiProperty({
+    description: 'Recipe ID',
+    example: 123456,
+    required: false,
+  })
+  @IsOptional()
+  @IsNumber()
+  recipe_id?: number;
+
+  @ApiProperty({
     description: 'Recipe name',
     example: 'Arriba Baked Winter Squash Mexican Style',
   })
@@ -52,6 +61,56 @@ export class CreateRecipeDto {
   @IsNumber()
   @Min(1)
   cookingTime: number;
+
+  @ApiProperty({
+    description: 'Cooking time in minutes (legacy)',
+    example: 55,
+    required: false,
+  })
+  @IsOptional()
+  @IsNumber()
+  @Min(1)
+  minutes?: number;
+
+  @ApiProperty({
+    description: 'Number of steps',
+    required: false,
+  })
+  @IsOptional()
+  @IsNumber()
+  n_steps?: number;
+
+  @ApiProperty({
+    description: 'Number of ingredients',
+    required: false,
+  })
+  @IsOptional()
+  @IsNumber()
+  n_ingredients?: number;
+
+  @ApiProperty({
+    description: 'Contributor ID',
+    required: false,
+  })
+  @IsOptional()
+  @IsNumber()
+  contributor_id?: number;
+
+  @ApiProperty({
+    description: 'Contributor ID (legacy)',
+    required: false,
+  })
+  @IsOptional()
+  @IsString()
+  contributorId?: string;
+
+  @ApiProperty({
+    description: 'Submitted date',
+    required: false,
+  })
+  @IsOptional()
+  @IsString()
+  submitted?: string;
 
   @ApiProperty({
     description: 'Cuisine type',
