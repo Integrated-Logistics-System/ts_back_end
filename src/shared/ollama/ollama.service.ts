@@ -2,126 +2,210 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import axios from 'axios';
 
+interface OllamaGenerateRequest {
+  model: string;
+  prompt: string;
+  stream: boolean;
+  options?: {
+    temperature?: number;
+    top_k?: number;
+    top_p?: number;
+    num_predict?: number;
+  };
+}
+
+interface OllamaGenerateResponse {
+  response: string;
+  done: boolean;
+  model: string;
+  created_at: string;
+  context?: number[];
+  total_duration?: number;
+  load_duration?: number;
+  prompt_eval_count?: number;
+  prompt_eval_duration?: number;
+  eval_count?: number;
+  eval_duration?: number;
+}
+
 @Injectable()
 export class OllamaService {
   private readonly logger = new Logger(OllamaService.name);
   private readonly baseUrl: string;
-  private readonly model: string;
+  private readonly defaultModel: string;
+  private readonly timeout: number;
 
   constructor(private configService: ConfigService) {
-    this.baseUrl = this.configService.get('OLLAMA_URL');
-    this.model = this.configService.get('OLLAMA_MODEL');
+    this.baseUrl = this.configService.get('OLLAMA_URL') || 'http://192.168.0.111:11434';
+    this.defaultModel = this.configService.get('OLLAMA_MODEL') || 'qwen2.5:0.5b';
+    this.timeout = 30000; // 30초 타임아웃
+    
+    this.checkConnection();
   }
 
-  async generateResponse(prompt: string, systemPrompt?: string): Promise<string> {
+  async checkConnection(): Promise<void> {
     try {
-      const messages = [];
-      
-      if (systemPrompt) {
-        messages.push({ role: 'system', content: systemPrompt });
+      const isConnected = await this.ping();
+      if (isConnected) {
+        this.logger.log('✅ Ollama 연결 성공');
+        await this.checkModels();
+      } else {
+        this.logger.error('❌ Ollama 연결 실패');
       }
-      
-      messages.push({ role: 'user', content: prompt });
+    } catch (error) {
+      this.logger.error('Ollama 초기화 오류:', error.message);
+    }
+  }
 
-      const response = await axios.post(`${this.baseUrl}/api/chat`, {
-        model: this.model,
-        messages,
+  async checkModels(): Promise<void> {
+    try {
+      const models = await this.listModels();
+      if (models.length > 0) {
+        this.logger.log(`🤖 사용 가능한 모델: ${models.map(m => m.name).join(', ')}`);
+        
+        // 기본 모델 존재 여부 확인
+        const hasDefaultModel = models.some(m => m.name.includes(this.defaultModel.split(':')[0]));
+        if (!hasDefaultModel) {
+          this.logger.warn(`⚠️ 기본 모델 (${this.defaultModel})이 없습니다. 첫 번째 모델을 사용합니다.`);
+        }
+      } else {
+        this.logger.warn('⚠️ 설치된 모델이 없습니다. 모델을 다운로드하세요.');
+      }
+    } catch (error) {
+      this.logger.error('모델 목록 조회 실패:', error.message);
+    }
+  }
+
+  async generateResponse(
+    prompt: string,
+    model?: string,
+    options?: {
+      temperature?: number;
+      maxTokens?: number;
+      stream?: boolean;
+    }
+  ): Promise<string> {
+    try {
+      const requestModel = model || this.defaultModel;
+      
+      this.logger.debug(`🤖 AI 응답 생성 시작 [${requestModel}]`);
+      this.logger.debug(`📝 프롬프트 길이: ${prompt.length}자`);
+
+      const requestData: OllamaGenerateRequest = {
+        model: requestModel,
+        prompt: prompt.trim(),
         stream: false,
         options: {
-          temperature: 0.7,
-          top_p: 0.9,
-          max_tokens: 1000,
-        },
+          temperature: options?.temperature || 0.7,
+          num_predict: options?.maxTokens || 500,
+        }
+      };
+
+      const response = await axios.post<OllamaGenerateResponse>(
+        `${this.baseUrl}/api/generate`,
+        requestData,
+        {
+          timeout: this.timeout,
+          headers: {
+            'Content-Type': 'application/json',
+          }
+        }
+      );
+
+      if (response.data && response.data.response) {
+        const generatedText = response.data.response.trim();
+        this.logger.debug(`✅ AI 응답 생성 완료: ${generatedText.length}자`);
+        return generatedText;
+      }
+
+      throw new Error('Ollama 응답이 비어있습니다.');
+
+    } catch (error) {
+      this.logger.error('AI 응답 생성 실패:', error.message);
+      
+      if (error.code === 'ECONNREFUSED') {
+        throw new Error('Ollama 서버에 연결할 수 없습니다. 서버가 실행 중인지 확인하세요.');
+      }
+      
+      if (error.response?.status === 404) {
+        throw new Error(`모델 '${model || this.defaultModel}'을 찾을 수 없습니다.`);
+      }
+      
+      if (error.code === 'ECONNABORTED') {
+        throw new Error('AI 응답 생성 시간이 초과되었습니다.');
+      }
+      
+      throw new Error(`AI 응답 생성 중 오류가 발생했습니다: ${error.message}`);
+    }
+  }
+
+  async listModels(): Promise<Array<{ name: string; size: number; digest: string }>> {
+    try {
+      const response = await axios.get(`${this.baseUrl}/api/tags`, {
+        timeout: 5000
       });
 
-      return response.data.message.content;
-    } catch (error) {
-      this.logger.error('Ollama API 호출 실패:', error.message);
-      throw new Error(`AI 응답 생성 실패: ${error.message}`);
-    }
-  }
-
-  async extractIngredients(text: string): Promise<string[]> {
-    const prompt = `
-다음 텍스트에서 요리 재료명만 추출해서 배열로 반환하세요.
-재료가 아닌 것들(조리법, 도구, 시간 등)은 제외하세요.
-
-텍스트: "${text}"
-
-응답 형식: ["재료1", "재료2", "재료3"]
-`;
-
-    try {
-      const response = await this.generateResponse(prompt);
-      // JSON 파싱 시도
-      const match = response.match(/\[(.*?)\]/);
-      if (match) {
-        return JSON.parse(match[0]);
+      if (response.data && response.data.models) {
+        return response.data.models;
       }
+
       return [];
     } catch (error) {
-      this.logger.warn('재료 추출 실패, 기본 파싱 사용');
-      return this.fallbackExtractIngredients(text);
+      this.logger.error('모델 목록 조회 실패:', error.message);
+      return [];
     }
   }
 
-  private fallbackExtractIngredients(text: string): string[] {
-    // 기본적인 재료 추출 로직
-    const commonIngredients = [
-      '닭고기', '돼지고기', '쇠고기', '생선', '새우', '오징어',
-      '양파', '마늘', '생강', '파', '당근', '감자', '토마토',
-      '쌀', '면', '빵', '계란', '우유', '치즈', '버터',
-      '간장', '된장', '고추장', '설탕', '소금', '후추',
-      '기름', '참기름', '올리브오일'
-    ];
-
-    return commonIngredients.filter(ingredient => 
-      text.includes(ingredient)
-    );
-  }
-
-  async generateRecipeResponse(
-    userQuery: string,
-    recipes: any[],
-    userAllergies: string[] = []
-  ): Promise<string> {
-    const systemPrompt = `
-당신은 친근하고 전문적인 AI 요리 어시스턴트입니다.
-사용자의 질문에 맞는 레시피를 추천하고 도움을 주세요.
-
-규칙:
-1. 친근하고 도움이 되는 톤으로 답변
-2. 알레르기가 있다면 반드시 주의사항 언급
-3. 구체적이고 실용적인 조언 제공
-4. 150자 이내로 간결하게 작성
-`;
-
-    const prompt = `
-사용자 질문: "${userQuery}"
-사용자 알레르기: ${userAllergies.length > 0 ? userAllergies.join(', ') : '없음'}
-추천 레시피 수: ${recipes.length}개
-
-${recipes.length > 0 ? 
-  `추천 레시피들:
-${recipes.slice(0, 3).map((recipe, idx) => 
-  `${idx + 1}. ${recipe.name} (${recipe.minutes}분, 재료 ${recipe.n_ingredients}개)`
-).join('\n')}` : 
-  '조건에 맞는 레시피를 찾지 못했습니다.'
-}
-
-사용자에게 도움이 되는 응답을 생성해주세요.
-`;
-
-    return this.generateResponse(prompt, systemPrompt);
-  }
-
-  async checkHealth(): Promise<boolean> {
+  async ping(): Promise<boolean> {
     try {
-      const response = await axios.get(`${this.baseUrl}/api/tags`, { timeout: 5000 });
+      const response = await axios.get(`${this.baseUrl}/api/tags`, {
+        timeout: 5000
+      });
       return response.status === 200;
     } catch (error) {
-      this.logger.error('Ollama 헬스체크 실패:', error.message);
+      this.logger.error('Ollama ping 실패:', error.message);
       return false;
     }
+  }
+
+  async pullModel(modelName: string): Promise<boolean> {
+    try {
+      this.logger.log(`📥 모델 다운로드 시작: ${modelName}`);
+      
+      const response = await axios.post(
+        `${this.baseUrl}/api/pull`,
+        { name: modelName },
+        { timeout: 300000 } // 5분 타임아웃
+      );
+
+      this.logger.log(`✅ 모델 다운로드 완료: ${modelName}`);
+      return true;
+    } catch (error) {
+      this.logger.error(`모델 다운로드 실패 [${modelName}]:`, error.message);
+      return false;
+    }
+  }
+
+  async deleteModel(modelName: string): Promise<boolean> {
+    try {
+      await axios.delete(`${this.baseUrl}/api/delete`, {
+        data: { name: modelName },
+        timeout: 10000
+      });
+
+      this.logger.log(`🗑️ 모델 삭제 완료: ${modelName}`);
+      return true;
+    } catch (error) {
+      this.logger.error(`모델 삭제 실패 [${modelName}]:`, error.message);
+      return false;
+    }
+  }
+
+  getDefaultModel(): string {
+    return this.defaultModel;
+  }
+
+  getBaseUrl(): string {
+    return this.baseUrl;
   }
 }

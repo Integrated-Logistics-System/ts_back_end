@@ -1,5 +1,6 @@
 import { Controller, Get } from '@nestjs/common';
 import { AppService } from './app.service';
+import { HealthCheckResult } from './shared/interfaces';
 
 @Controller()
 export class AppController {
@@ -11,7 +12,12 @@ export class AppController {
   }
 
   @Get('health')
-  getHealth() {
-    return this.appService.getHealth();
+  getHealth(): HealthCheckResult {
+    return {
+      status: 'healthy',
+      service: 'AI Recipe Assistant',
+      timestamp: new Date().toISOString(),
+      features: ['recipe-search', 'multilingual-support', 'rag-powered']
+    };
   }
 }

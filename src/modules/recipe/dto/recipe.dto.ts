@@ -159,3 +159,94 @@ export class RecipeByIngredientsDto {
   @IsOptional()
   limit?: number;
 }
+
+// 카드 형식의 레시피 응답 DTO
+export class RecipeCardDto {
+  @IsNumber()
+  id: number;
+
+  @IsString()
+  name: string;
+
+  @IsString()
+  @IsOptional()
+  originalName?: string;
+
+  @IsString()
+  @IsOptional()
+  description?: string;
+
+  @IsString()
+  @IsOptional()
+  originalDescription?: string;
+
+  @IsArray()
+  ingredients: string[];
+
+  @IsNumber()
+  minutes: number;
+
+  @IsNumber()
+  n_ingredients: number;
+
+  @IsNumber()
+  n_steps: number;
+
+  @IsArray()
+  @IsOptional()
+  tags?: string[];
+
+  @IsOptional()
+  nutrition?: {
+    calories?: number;
+    fat?: number;
+    protein?: number;
+    carbs?: number;
+  };
+
+  @IsNumber()
+  @IsOptional()
+  relevanceScore?: number;
+
+  @IsBoolean()
+  @IsOptional()
+  isTranslated?: boolean;
+
+  @IsString()
+  @IsOptional()
+  difficulty?: string;
+
+  @IsArray()
+  @IsOptional()
+  allergenInfo?: string[];
+
+  @IsBoolean()
+  @IsOptional()
+  isSafeForUser?: boolean;
+}
+
+// 검색 응답 DTO
+export class SearchResponseDto {
+  @IsArray()
+  recipes: RecipeCardDto[];
+
+  @IsNumber()
+  total: number;
+
+  @IsArray()
+  @IsOptional()
+  workflow_steps?: string[];
+
+  @IsString()
+  @IsOptional()
+  ai_response?: string;
+
+  @IsString()
+  @IsOptional()
+  query_info?: {
+    original: string;
+    translated?: string;
+    final: string;
+    language: 'ko' | 'en' | 'other';
+  };
+}
