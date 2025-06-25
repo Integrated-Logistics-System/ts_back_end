@@ -1,68 +1,162 @@
-import { Controller, Post, Body, Get, Param, BadRequestException, NotFoundException } from '@nestjs/common';
-import { RAGService } from '../rag/rag.service';
-import { 
-  RecipeSearchResult, 
-  RecipeDetailData 
-} from '@/shared';
-import { 
-  RecipeSearchRequestDto,
-  RecipeChatRequestDto
-} from '@/shared';
+import { Controller, Post, Get, Body, Param, Query, Logger } from '@nestjs/common';
+import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
+import { RecipeService } from './recipe.service';
 
+@ApiTags('Recipe')
 @Controller('recipe')
 export class RecipeController {
-  constructor(private readonly ragService: RAGService) {}
+  private readonly logger = new Logger(RecipeController.name);
+  
+  constructor(private readonly recipeService: RecipeService) {}
 
   @Post('search')
-  async searchRecipe(@Body() request: RecipeSearchRequestDto): Promise<RecipeSearchResult> {
-    if (!request.query || request.query.trim().length === 0) {
-      throw new BadRequestException('검색어를 입력해주세요.');
-    }
-
+  @ApiOperation({ summary: 'Search recipes' })
+  @ApiResponse({ status: 200, description: 'Recipes found successfully' })
+  async searchRecipes(
+    @Body() body: { query: string; page?: number; limit?: number }
+  ) {
     try {
-      if (request.userAllergenProfile) {
-        return await this.ragService.findOptimalRecipeWithAllergens(
-          request.query, 
-          request.language,
-          request.userAllergenProfile
-        );
-      } else {
-        return await this.ragService.findOptimalRecipe(request.query, request.language);
-      }
+      const result = await this.recipeService.searchRecipes(
+        body.query,
+        body.page || 1,
+        body.limit || 10
+      );
+      
+      return {
+        success: true,
+        data: result
+      };
     } catch (error) {
-      throw new BadRequestException(`레시피 검색 실패: ${error.message}`);
+      this.logger.error(`Recipe search error: ${error.message}`);
+      return {
+        success: false,
+        error: 'Recipe search failed',
+        data: { recipes: [], total: 0 }
+      };
     }
   }
 
   @Get('detail/:id')
-  async getRecipeDetail(@Param('id') id: string): Promise<RecipeDetailData> {
-    const recipeId = parseInt(id);
+  @ApiOperation({ summary: 'Get recipe details' })
+  @ApiResponse({ status: 200, description: 'Recipe details retrieved successfully' })
+  async getRecipeDetail(@Param('id') id: string) {
+    this.logger.log(`Getting recipe details: ID = ${id}`);
     
-    if (isNaN(recipeId) || recipeId <= 0) {
-      throw new BadRequestException('유효하지 않은 레시피 ID입니다.');
-    }
-
     try {
-      return await this.ragService.getRecipeDetail(recipeId);
-    } catch (error) {
-      throw new NotFoundException(`레시피를 찾을 수 없습니다: ${error.message}`);
-    }
-  }
-
-  @Post('chat')
-  async chatRecipe(@Body() body: RecipeChatRequestDto): Promise<{ response: string; recipes?: any[] }> {
-    if (!body.query || body.query.trim().length === 0) {
-      throw new BadRequestException('메시지를 입력해주세요.');
-    }
-
-    try {
-      const result = await this.ragService.findOptimalRecipe(body.query);
+      const recipe = await this.recipeService.getRecipeById(id);
+      
+      if (!recipe) {
+        return {
+          success: false,
+          error: `Recipe with ID ${id} not found`,
+          data: null
+        };
+      }
+      
+      this.logger.log(`Recipe details found: ${recipe.name}`);
       return {
-        response: result.explanation,
-        recipes: result.recipes
+        success: true,
+        data: recipe
       };
     } catch (error) {
-      throw new BadRequestException(`채팅 처리 실패: ${error.message}`);
+      this.logger.error(`Recipe detail error: ${error.message}`);
+      return {
+        success: false,
+        error: 'Failed to get recipe details',
+        data: null
+      };
     }
   }
+
+  // ❌ 복잡한 기능들은 주석 처리 - LangChain으로 대체
+  /*
+  @Get('popular')
+  @ApiOperation({ summary: 'Get popular recipes' })
+  @ApiResponse({ status: 200, description: 'Popular recipes retrieved successfully' })
+  async getPopularRecipes(@Query('limit') limit: number = 10) {
+    try {
+      const result = await this.recipeService.getPopularRecipes(limit);
+      return {
+        success: true,
+        data: result
+      };
+    } catch (error) {
+      this.logger.error(`Popular recipes error: ${error.message}`);
+      return {
+        success: false,
+        error: 'Failed to get popular recipes',
+        data: { recipes: [] }
+      };
+    }
+  }
+
+  @Get('stats')
+  @ApiOperation({ summary: 'Get recipe statistics' })
+  @ApiResponse({ status: 200, description: 'Recipe stats retrieved successfully' })
+  async getRecipeStats() {
+    try {
+      const stats = await this.recipeService.getRecipeStats();
+      return {
+        success: true,
+        data: stats
+      };
+    } catch (error) {
+      this.logger.error(`Recipe stats error: ${error.message}`);
+      return {
+        success: false,
+        error: 'Failed to get recipe stats',
+        data: { totalRecipes: 0 }
+      };
+    }
+  }
+
+  @Post('recommendations')
+  @ApiOperation({ summary: 'Get personalized recipe recommendations' })
+  @ApiResponse({ status: 200, description: 'Recommendations generated successfully' })
+  async getRecommendations(
+    @Body() body: { preferences?: string[]; allergies?: string[] }
+  ) {
+    try {
+      const result = await this.recipeService.getRecommendedRecipes(
+        body.preferences || [],
+        body.allergies || []
+      );
+      
+      return {
+        success: true,
+        data: result
+      };
+    } catch (error) {
+      this.logger.error(`Recipe recommendations error: ${error.message}`);
+      return {
+        success: false,
+        error: 'Failed to get recommendations',
+        data: { recipes: [] }
+      };
+    }
+  }
+
+  @Get('category/:category')
+  @ApiOperation({ summary: 'Get recipes by category' })
+  @ApiResponse({ status: 200, description: 'Category recipes retrieved successfully' })
+  async getRecipesByCategory(
+    @Param('category') category: string,
+    @Query('limit') limit: number = 10
+  ) {
+    try {
+      const result = await this.recipeService.getRecipesByCategory(category, limit);
+      return {
+        success: true,
+        data: result
+      };
+    } catch (error) {
+      this.logger.error(`Category recipes error: ${error.message}`);
+      return {
+        success: false,
+        error: 'Failed to get category recipes',
+        data: { recipes: [] }
+      };
+    }
+  }
+  */
 }

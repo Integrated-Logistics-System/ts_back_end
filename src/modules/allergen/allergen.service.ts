@@ -1,17 +1,53 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { ElasticsearchService } from '../elasticsearch/elasticsearch.service';
-import { 
-  AllergenInfo, 
-  AllergenCheckResult, 
-  AllergenWarning, 
-  UserAllergenProfile,
-  AllergenStats
-} from '../../shared/interfaces';
-import { AllergySeverity, AllergenType } from '../../shared/types';
+import { ElasticsearchService, AllergenData } from '../elasticsearch/elasticsearch.service';
+
+export interface AllergenCheckResult {
+  isAllergenic: boolean;
+  allergenTypes: string[];
+  severity: 'low' | 'medium' | 'high';
+  details: {
+    ingredient: string;
+    allergens: Array<{
+      type: string;
+      value: number;
+      koreanName: string;
+    }>;
+  };
+}
+
+export interface AllergenSummary {
+  totalIngredients: number;
+  allergenicIngredients: number;
+  allergenTypes: string[];
+  riskLevel: 'safe' | 'caution' | 'danger';
+}
 
 @Injectable()
 export class AllergenService {
   private readonly logger = new Logger(AllergenService.name);
+
+  // 알레르기 타입 매핑
+  private readonly allergenMap = {
+    '글루텐함유곡물': '글루텐',
+    '갑각류': '갑각류',
+    '난류': '달걀',
+    '어류': '생선',
+    '땅콩': '땅콩',
+    '대두': '대두',
+    '우유': '유제품',
+    '견과류': '견과류',
+    '셀러리': '셀러리',
+    '겨자': '겨자',
+    '참깨': '참깨',
+    '아황산류': '아황산류',
+    '루핀': '루핀',
+    '연체동물': '연체동물',
+    '복숭아': '복숭아',
+    '토마토': '토마토',
+    '돼지고기': '돼지고기',
+    '쇠고기': '쇠고기',
+    '닭고기': '닭고기'
+  };
 
   constructor(
     private readonly elasticsearchService: ElasticsearchService,
@@ -20,317 +56,256 @@ export class AllergenService {
   /**
    * 특정 재료의 알레르기 정보 조회
    */
-  async getIngredientAllergens(ingredientName: string): Promise<AllergenInfo | null> {
+  async checkIngredientAllergen(ingredientName: string): Promise<AllergenCheckResult | null> {
     try {
-      const searchBody = {
-        query: {
-          bool: {
-            should: [
-              { match: { ingredient_name: { query: ingredientName, boost: 3 } } },
-              { match: { "ingredient_name.keyword": { query: ingredientName, boost: 5 } } },
-              { fuzzy: { ingredient_name: { value: ingredientName, fuzziness: "AUTO" } } }
-            ],
-            minimum_should_match: 1
-          }
-        },
-        size: 1
-      };
-
-      const response = await this.elasticsearchService.search('allergens', searchBody);
+      const normalizedName = this.normalizeIngredientName(ingredientName);
       
-      if (response.hits?.hits?.length > 0) {
-        return response.hits.hits[0]._source;
-      }
-
-      return null;
-    } catch (error) {
-      this.logger.error(`재료 알레르기 조회 실패 [${ingredientName}]:`, error.message);
-      return null;
-    }
-  }
-
-  /**
-   * 여러 재료의 알레르기 정보 일괄 조회
-   */
-  async getMultipleIngredientAllergens(ingredients: string[]): Promise<Map<string, AllergenInfo>> {
-    const allergenMap = new Map<string, AllergenInfo>();
-
-    try {
-      // 배치 크기를 줄여서 안정성 향상
-      const batchSize = 10;
+      const allergenData = await this.elasticsearchService.searchAllergen(normalizedName);
       
-      for (let i = 0; i < ingredients.length; i += batchSize) {
-        const batch = ingredients.slice(i, i + batchSize);
-        
-        const searchBody = {
-          query: {
-            bool: {
-              should: batch.map(ingredient => ({
-                bool: {
-                  should: [
-                    { match: { ingredient_name: { query: ingredient, boost: 3 } } },
-                    { match: { "ingredient_name.keyword": { query: ingredient, boost: 5 } } },
-                    { fuzzy: { ingredient_name: { value: ingredient, fuzziness: "AUTO" } } }
-                  ]
-                }
-              })),
-              minimum_should_match: 1
-            }
-          },
-          size: batch.length * 2 // 퍼지 매칭으로 인한 여분
-        };
-
-        const response = await this.elasticsearchService.search('allergens', searchBody);
-        
-        if (response.hits?.hits) {
-          response.hits.hits.forEach(hit => {
-            const allergenInfo = hit._source;
-            // 입력 재료와 가장 유사한 매칭 찾기
-            const matchedIngredient = this.findBestMatch(allergenInfo.ingredient_name, batch);
-            if (matchedIngredient) {
-              allergenMap.set(matchedIngredient, allergenInfo);
-            }
-          });
+      if (!allergenData) {
+        // Try partial matching with original name
+        const partialResult = await this.elasticsearchService.searchAllergen(ingredientName);
+        if (!partialResult) {
+          return null;
         }
+        return this.processAllergenData(partialResult);
       }
 
+      return this.processAllergenData(allergenData);
     } catch (error) {
-      this.logger.error('다중 재료 알레르기 조회 실패:', error.message);
+      this.logger.error(`Error checking allergen for ${ingredientName}:`, error);
+      return null;
     }
-
-    return allergenMap;
   }
 
   /**
-   * 레시피의 알레르기 안전성 체크
+   * 여러 재료들의 알레르기 정보 체크
    */
-  async checkRecipeAllergens(
-    ingredients: string[], 
-    userProfile: UserAllergenProfile
-  ): Promise<AllergenCheckResult> {
+  async checkMultipleIngredients(ingredients: string[]): Promise<AllergenSummary> {
     try {
-      this.logger.log(`🔍 알레르기 체크 시작: ${ingredients.length}개 재료`);
-
-      // 재료명 정규화
       const normalizedIngredients = ingredients.map(ing => this.normalizeIngredientName(ing));
+      const allergenDataList = await this.elasticsearchService.searchAllergensMultiple(normalizedIngredients);
       
-      // 알레르기 정보 조회
-      const allergenMap = await this.getMultipleIngredientAllergens(normalizedIngredients);
+      const results: AllergenCheckResult[] = [];
       
-      const warnings: AllergenWarning[] = [];
-      const checkedIngredients: string[] = [];
-      const unknownIngredients: string[] = [];
+      for (const allergenData of allergenDataList) {
+        const result = this.processAllergenData(allergenData);
+        if (result) {
+          results.push(result);
+        }
+      }
 
-      // 각 재료별 알레르기 체크
-      for (const ingredient of normalizedIngredients) {
-        const allergenInfo = allergenMap.get(ingredient);
+      return this.summarizeAllergens(ingredients, results);
+    } catch (error) {
+      this.logger.error('Error checking multiple ingredients:', error);
+      return {
+        totalIngredients: ingredients.length,
+        allergenicIngredients: 0,
+        allergenTypes: [],
+        riskLevel: 'safe'
+      };
+    }
+  }
+
+  /**
+   * 사용자 알레르기와 레시피 재료 비교
+   */
+  async checkRecipeAgainstAllergies(
+    recipeIngredients: string[], 
+    userAllergies: string[]
+  ): Promise<{
+    isSafe: boolean;
+    conflicts: Array<{
+      ingredient: string;
+      allergenType: string;
+      severity: string;
+    }>;
+    warnings: string[];
+  }> {
+    try {
+      const conflicts = [];
+      const warnings = [];
+
+        const allergenDataList = await this.elasticsearchService.searchAllergensMultiple(recipeIngredients);
+      
+      for (let i = 0; i < recipeIngredients.length; i++) {
+        const ingredient = recipeIngredients[i];
+        const allergenData = allergenDataList.find(data => 
+          this.normalizeIngredientName(data.ingredient_name) === this.normalizeIngredientName(ingredient)
+        );
         
-        if (allergenInfo) {
-          checkedIngredients.push(ingredient);
-          const ingredientWarnings = this.checkIngredientAllergens(
-            ingredient, 
-            allergenInfo, 
-            userProfile
-          );
-          warnings.push(...ingredientWarnings);
-        } else {
-          unknownIngredients.push(ingredient);
+        if (allergenData) {
+          const allergenResult = this.processAllergenData(allergenData);
           
-          // 사용자 커스텀 위험 재료 체크
-          if (userProfile.customIngredients?.includes(ingredient.toLowerCase())) {
-            warnings.push({
-              ingredient,
-              allergens: ['custom'],
-              severity: 'high',
-              note: '사용자 지정 위험 재료'
-            });
+          if (allergenResult && allergenResult.isAllergenic) {
+            const matchedAllergies = allergenResult.allergenTypes.filter(allergen =>
+              userAllergies.some(userAllergy => 
+                this.normalizeAllergenType(allergen) === this.normalizeAllergenType(userAllergy)
+              )
+            );
+
+            if (matchedAllergies.length > 0) {
+              conflicts.push({
+                ingredient,
+                allergenType: matchedAllergies.join(', '),
+                severity: allergenResult.severity
+              });
+            }
           }
         }
       }
 
-      // 위험도 계산
-      const riskLevel = this.calculateRiskLevel(warnings);
-      const isSafe = warnings.length === 0;
-
-      this.logger.log(`✅ 알레르기 체크 완료: ${isSafe ? '안전' : '위험'} (${warnings.length}개 경고)`);
+      // 경고 메시지 생성
+      if (conflicts.length > 0) {
+        warnings.push(`⚠️ 알레르기 주의: ${conflicts.map(c => c.ingredient).join(', ')}`);
+        
+        const highRiskItems = conflicts.filter(c => c.severity === 'high');
+        if (highRiskItems.length > 0) {
+          warnings.push(`🚨 고위험: ${highRiskItems.map(c => c.ingredient).join(', ')}`);
+        }
+      }
 
       return {
-        isSafe,
-        warnings,
-        riskLevel,
-        checkedIngredients,
-        unknownIngredients
+        isSafe: conflicts.length === 0,
+        conflicts,
+        warnings
       };
-
     } catch (error) {
-      this.logger.error('레시피 알레르기 체크 실패:', error.message);
-      
-      // 에러 시 안전을 위해 위험으로 분류
+      this.logger.error('Error checking recipe against allergies:', error);
       return {
         isSafe: false,
-        warnings: [{
-          ingredient: 'system_error',
-          allergens: ['unknown'],
-          severity: 'high',
-          note: '알레르기 체크 중 오류가 발생했습니다. 안전을 위해 섭취를 피해주세요.'
-        }],
-        riskLevel: 'high',
-        checkedIngredients: [],
-        unknownIngredients: ingredients
+        conflicts: [],
+        warnings: ['알레르기 검사 중 오류가 발생했습니다.']
       };
     }
   }
 
   /**
-   * 특정 알레르기 유형을 가진 재료 검색
+   * 알레르기 타입 목록 조회
    */
-  async searchAllergenicIngredients(allergenType: string, limit: number = 20): Promise<AllergenInfo[]> {
-    try {
-      const searchBody = {
-        query: {
-          range: {
-            [`allergens.${allergenType}`]: {
-              gt: 0
-            }
-          }
-        },
-        sort: [
-          { [`allergens.${allergenType}`]: { order: 'desc' } },
-          { allergen_count: { order: 'desc' } }
-        ],
-        size: limit
-      };
+  getAllergenTypes(): Array<{ key: string; name: string; description: string }> {
+    return [
+      { key: 'gluten', name: '글루텐', description: '밀, 보리, 호밀 등의 곡물' },
+      { key: 'crustacean', name: '갑각류', description: '새우, 게, 가재 등' },
+      { key: 'egg', name: '달걀', description: '닭달걀 및 달걀 제품' },
+      { key: 'fish', name: '생선', description: '각종 어류' },
+      { key: 'peanut', name: '땅콩', description: '땅콩 및 땅콩 제품' },
+      { key: 'soy', name: '대두', description: '콩 및 콩 제품' },
+      { key: 'milk', name: '유제품', description: '우유 및 유제품' },
+      { key: 'nuts', name: '견과류', description: '아몬드, 호두, 캐슈넛 등' },
+      { key: 'celery', name: '셀러리', description: '셀러리 및 셀러리 제품' },
+      { key: 'mustard', name: '겨자', description: '겨자 및 겨자 제품' },
+      { key: 'sesame', name: '참깨', description: '참깨 및 참깨 제품' },
+      { key: 'sulfite', name: '아황산류', description: '방부제로 사용되는 황 화합물' },
+      { key: 'lupin', name: '루핀', description: '루핀콩 및 루핀 제품' },
+      { key: 'mollusc', name: '연체동물', description: '조개, 굴, 오징어 등' },
+      { key: 'peach', name: '복숭아', description: '복숭아 및 복숭아 제품' },
+      { key: 'tomato', name: '토마토', description: '토마토 및 토마토 제품' },
+      { key: 'pork', name: '돼지고기', description: '돼지고기 및 돼지고기 제품' },
+      { key: 'beef', name: '쇠고기', description: '쇠고기 및 쇠고기 제품' },
+      { key: 'chicken', name: '닭고기', description: '닭고기 및 닭고기 제품' }
+    ];
+  }
 
-      const response = await this.elasticsearchService.search('allergens', searchBody);
-      
-      if (response.hits?.hits) {
-        return response.hits.hits.map(hit => hit._source);
+  /**
+   * 알레르기 통계 조회
+   */
+  async getAllergenStats(): Promise<{
+    totalIngredients: number;
+    allergenicIngredients: number;
+    allergenDistribution: Array<{ type: string; count: number }>;
+  }> {
+    try {
+      return await this.elasticsearchService.getAllergenStats();
+    } catch (error) {
+      this.logger.error('Error getting allergen stats:', error);
+      return {
+        totalIngredients: 0,
+        allergenicIngredients: 0,
+        allergenDistribution: []
+      };
+    }
+  }
+
+  private processAllergenData(allergenData: AllergenData): AllergenCheckResult {
+    const allergens = [];
+    let maxValue = 0;
+
+    // 모든 알레르기 필드 체크
+    for (const [dbField, displayName] of Object.entries(this.allergenMap)) {
+      const value = allergenData[dbField] || 0;
+      if (value > 0) {
+        allergens.push({
+          type: displayName,
+          value,
+          koreanName: displayName
+        });
+        maxValue = Math.max(maxValue, value);
       }
-
-      return [];
-    } catch (error) {
-      this.logger.error(`알레르기 재료 검색 실패 [${allergenType}]:`, error.message);
-      return [];
     }
+
+    // 심각도 계산
+    let severity: 'low' | 'medium' | 'high' = 'low';
+    if (maxValue >= 0.8) severity = 'high';
+    else if (maxValue >= 0.5) severity = 'medium';
+
+    return {
+      isAllergenic: allergens.length > 0,
+      allergenTypes: allergens.map(a => a.type),
+      severity,
+      details: {
+        ingredient: allergenData.ingredient_name,
+        allergens
+      }
+    };
   }
 
-  /**
-   * 알레르기 통계 정보 조회
-   */
-  async getAllergenStats(): Promise<any> {
-    try {
-      const searchBody = {
-        size: 0,
-        aggs: {
-          allergen_distribution: {
-            terms: {
-              field: 'allergen_count',
-              size: 20
-            }
-          },
-          common_allergens: {
-            terms: {
-              field: 'allergen_types.keyword',
-              size: 20
-            }
-          },
-          gluten_stats: {
-            stats: {
-              field: 'allergens.gluten'
-            }
-          },
-          milk_stats: {
-            stats: {
-              field: 'allergens.milk'
-            }
-          }
-        }
-      };
+  private summarizeAllergens(ingredients: string[], results: AllergenCheckResult[]): AllergenSummary {
+    const allergenicCount = results.filter(r => r.isAllergenic).length;
+    const allAllergenTypes = [...new Set(results.flatMap(r => r.allergenTypes))];
+    
+    // 위험도 계산
+    let riskLevel: 'safe' | 'caution' | 'danger' = 'safe';
+    const highRiskCount = results.filter(r => r.severity === 'high').length;
+    const mediumRiskCount = results.filter(r => r.severity === 'medium').length;
 
-      const response = await this.elasticsearchService.search('allergens', searchBody);
-      return response.aggregations;
-    } catch (error) {
-      this.logger.error('알레르기 통계 조회 실패:', error.message);
-      return null;
-    }
+    if (highRiskCount > 0) riskLevel = 'danger';
+    else if (mediumRiskCount > 0 || allergenicCount > ingredients.length * 0.3) riskLevel = 'caution';
+
+    return {
+      totalIngredients: ingredients.length,
+      allergenicIngredients: allergenicCount,
+      allergenTypes: allAllergenTypes,
+      riskLevel
+    };
   }
 
-  /**
-   * 재료명 정규화
-   */
-  private normalizeIngredientName(ingredient: string): string {
-    return ingredient
+  private normalizeIngredientName(name: string): string {
+    return name
       .toLowerCase()
       .trim()
-      .replace(/\([^)]*\)/g, '') // 괄호 제거
-      .replace(/\d+\s*(g|kg|ml|l|컵|큰술|작은술|개|마리|장|포|병|캔|팩|슬라이스|조각|tbsp|tsp|cup|oz|lb)/gi, '') // 측정 단위 제거
-      .replace(/\s+/g, ' ')
-      .trim();
+      .replace(/[^\w가-힣]/g, '')
+      .replace(/\s+/g, '');
   }
 
-  /**
-   * 가장 유사한 재료 매칭
-   */
-  private findBestMatch(foundIngredient: string, searchIngredients: string[]): string | null {
-    const normalized = foundIngredient.toLowerCase();
-    
-    // 정확한 매치 우선
-    for (const ingredient of searchIngredients) {
-      if (ingredient.toLowerCase() === normalized) {
-        return ingredient;
+  private normalizeAllergenType(allergen: string): string {
+    const mapping = {
+      '글루텐': ['글루텐', '밀가루', '밀'],
+      '갑각류': ['갑각류', '새우', '게'],
+      '달걀': ['달걀', '계란', '난류'],
+      '생선': ['생선', '어류', '물고기'],
+      '견과류': ['견과류', '너트', '아몬드', '호두'],
+      '유제품': ['유제품', '우유', '치즈', '버터'],
+      '대두': ['대두', '콩', '된장'],
+      '땅콩': ['땅콩', '피넛']
+    };
+
+    for (const [standard, variants] of Object.entries(mapping)) {
+      if (variants.some(variant => allergen.includes(variant))) {
+        return standard;
       }
     }
 
-    // 부분 매치
-    for (const ingredient of searchIngredients) {
-      if (normalized.includes(ingredient.toLowerCase()) || 
-          ingredient.toLowerCase().includes(normalized)) {
-        return ingredient;
-      }
-    }
-
-    return null;
-  }
-
-  /**
-   * 특정 재료의 알레르기 체크
-   */
-  private checkIngredientAllergens(
-    ingredient: string,
-    allergenInfo: AllergenInfo,
-    userProfile: UserAllergenProfile
-  ): AllergenWarning[] {
-    const warnings: AllergenWarning[] = [];
-
-    for (const userAllergen of userProfile.allergies) {
-      const allergenValue = allergenInfo.allergens[userAllergen];
-      
-      if (allergenValue && allergenValue > 0) {
-        const severity = userProfile.severity[userAllergen] || 'medium';
-        
-        warnings.push({
-          ingredient,
-          allergens: [userAllergen],
-          severity,
-          note: allergenInfo.note || `${userAllergen} 알레르기 주의`
-        });
-      }
-    }
-
-    return warnings;
-  }
-
-  /**
-   * 전체 위험도 계산
-   */
-  private calculateRiskLevel(warnings: AllergenWarning[]): 'low' | 'medium' | 'high' {
-    if (warnings.length === 0) return 'low';
-
-    const hasHigh = warnings.some(w => w.severity === 'high');
-    const hasMedium = warnings.some(w => w.severity === 'medium');
-
-    if (hasHigh) return 'high';
-    if (hasMedium || warnings.length > 2) return 'medium';
-    return 'low';
+    return allergen;
   }
 }

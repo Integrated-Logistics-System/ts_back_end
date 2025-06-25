@@ -1,9 +1,12 @@
 import { Module } from '@nestjs/common';
+import { RecipeService } from './recipe.service';
 import { RecipeController } from './recipe.controller';
-import { RAGModule } from '../rag/rag.module';
+import { ElasticsearchModule } from '@/modules/elasticsearch/elasticsearch.module';
 
 @Module({
-  imports: [RAGModule],
+  imports: [ElasticsearchModule],
   controllers: [RecipeController],
+  providers: [RecipeService],
+  exports: [RecipeService],
 })
 export class RecipeModule {}
