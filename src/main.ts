@@ -3,11 +3,11 @@ import { AppModule } from './app.module';
 import { ValidationPipe, Logger } from '@nestjs/common';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { IoAdapter } from '@nestjs/platform-socket.io';
-import { ServerOptions } from 'socket.io';
+import { Server, ServerOptions } from 'socket.io';
 
 class ConfiguredIoAdapter extends IoAdapter {
-  createIOServer(port: number, options?: ServerOptions): any {
-    const websocketPort = parseInt(process.env.WEBSOCKET_PORT) || port || 8083;
+  createIOServer(port: number, options?: ServerOptions): Server {
+    const websocketPort = parseInt(process.env.WEBSOCKET_PORT || '8083', 10) || port || 8083;
     
     const cors = {
       origin: true,
@@ -21,9 +21,11 @@ class ConfiguredIoAdapter extends IoAdapter {
       cors,
       transports: ['websocket', 'polling'],
       allowEIO3: true,
-    };
+      path: options?.path || '/socket.io/',
+      serveClient: options?.serveClient ?? true,
+    } as ServerOptions;
 
-    return super.createIOServer(websocketPort, optionsWithCORS);
+    return super.createIOServer(websocketPort, optionsWithCORS) as Server;
   }
 }
 
@@ -36,12 +38,13 @@ async function bootstrap() {
     // WebSocket 어댑터 설정
     app.useWebSocketAdapter(new ConfiguredIoAdapter(app));
 
-    // CORS 설정
+    // CORS 설정 - 개발 환경에서 모든 요청 허용
     app.enableCors({
-      origin: true,
+      origin: true, // 모든 도메인 허용
       credentials: true,
-      methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-      allowedHeaders: ['Content-Type', 'Authorization', 'Accept'],
+      methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS', 'HEAD'],
+      allowedHeaders: ['Content-Type', 'Authorization', 'Accept', 'X-Requested-With', 'Origin'],
+      optionsSuccessStatus: 200, // IE11 호환성
     });
 
     // Global validation pipe
@@ -68,7 +71,7 @@ async function bootstrap() {
 
     const port = process.env.PORT || 8081;
     const websocketPort = process.env.WEBSOCKET_PORT || 8083;
-    await app.listen(port);
+    await app.listen(port as number);
 
     logger.log(`🚀 AI Chat Server running on http://localhost:${port}`);
     logger.log(`🔌 WebSocket Gateway running on ws://localhost:${websocketPort}`);
@@ -80,4 +83,4 @@ async function bootstrap() {
   }
 }
 
-bootstrap();
+void bootstrap();

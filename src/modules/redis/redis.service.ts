@@ -3,10 +3,28 @@ import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/commo
 // Redis 대신 메모리 기반 저장소 사용 (에러 방지)
 interface MemoryStore {
   [key: string]: {
-    value: any;
+    value: unknown;
     ttl?: number;
     timestamp: number;
   };
+}
+
+// Redis 클라이언트 타입 정의
+interface RedisClient {
+  status: string;
+  setex: (key: string, seconds: number, value: string) => Promise<void>;
+  set: (key: string, value: string) => Promise<void>;
+  get: (key: string) => Promise<string | null>;
+  del: (key: string) => Promise<void>;
+  lpush: (key: string, value: string) => Promise<void>;
+  lrange: (key: string, start: number, stop: number) => Promise<string[]>;
+  ltrim: (key: string, start: number, stop: number) => Promise<void>;
+  expire: (key: string, seconds: number) => Promise<void>;
+  sadd: (key: string, value: string) => Promise<void>;
+  smembers: (key: string) => Promise<string[]>;
+  srem: (key: string, value: string) => Promise<void>;
+  lindex: (key: string, index: number) => Promise<string | null>;
+  quit: () => Promise<void>;
 }
 
 @Injectable()
@@ -15,24 +33,36 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
   private memoryStore: MemoryStore = {};
   private cleanupInterval: NodeJS.Timeout | null = null;
   private useRedis = false;
-  private redisClient: any = null;
+  private redisClient: RedisClient | null = null;
 
   async onModuleInit() {
     await this.initialize();
   }
 
   private async initialize() {
-    // 지금은 메모리 저장소만 사용
-    this.logger.log('📝 Redis disabled, using memory store only');
-    this.useRedis = false;
+    try {
+      // Redis 연결 시도
+      const Redis = await this.importRedis();
+      if (Redis && process.env.REDIS_URL) {
+        this.redisClient = new Redis(process.env.REDIS_URL) as unknown as RedisClient;
+        this.useRedis = true;
+        this.logger.log('✅ Redis connected successfully');
+      } else {
+        throw new Error('Redis not available');
+      }
+    } catch (error) {
+      this.logger.warn('⚠️ Redis connection failed, using memory store:', error instanceof Error ? error.message : 'Unknown error');
+      this.useRedis = false;
+    }
+    
     this.setupMemoryStore();
   }
 
   private async importRedis() {
     try {
-      // ioredis 대신 메모리 사용으로 전환
-      return null;
-    } catch (error) {
+      const Redis = await import('ioredis');
+      return Redis.default;
+    } catch {
       this.logger.warn('⚠️ ioredis package not available');
       return null;
     }
@@ -65,7 +95,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
 
   isReady(): boolean {
     if (this.useRedis) {
-      return this.redisClient && this.redisClient.status === 'ready';
+      return this.redisClient?.status === 'ready';
     }
     return true; // 메모리 저장소는 항상 준비됨
   }
@@ -87,7 +117,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
         };
       }
     } catch (error) {
-      this.logger.warn(`Storage set error for key ${key}:`, error.message);
+      this.logger.warn(`Storage set error for key ${key}:`, error instanceof Error ? error.message : 'Unknown error');
       // Redis 에러 시 메모리로 폴백
       this.memoryStore[key] = {
         value,
@@ -112,10 +142,10 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
           return null;
         }
 
-        return item.value;
+        return typeof item.value === 'string' ? item.value : null;
       }
     } catch (error) {
-      this.logger.warn(`Storage get error for key ${key}:`, error.message);
+      this.logger.warn(`Storage get error for key ${key}:`, error instanceof Error ? error.message : 'Unknown error');
       return null;
     }
   }
@@ -128,7 +158,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
         delete this.memoryStore[key];
       }
     } catch (error) {
-      this.logger.warn(`Storage delete error for key ${key}:`, error.message);
+      this.logger.warn(`Storage delete error for key ${key}:`, error instanceof Error ? error.message : 'Unknown error');
       delete this.memoryStore[key];
     }
   }
@@ -143,7 +173,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
         let list: string[] = [];
         
         if (existing && Array.isArray(existing.value)) {
-          list = existing.value;
+          list = existing.value as string[];
         }
         
         list.unshift(value);
@@ -153,7 +183,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
         };
       }
     } catch (error) {
-      this.logger.warn(`Storage lpush error for key ${key}:`, error.message);
+      this.logger.warn(`Storage lpush error for key ${key}:`, error instanceof Error ? error.message : 'Unknown error');
     }
   }
 
@@ -173,7 +203,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
         return list.slice(start, stop + 1);
       }
     } catch (error) {
-      this.logger.warn(`Storage lrange error for key ${key}:`, error.message);
+      this.logger.warn(`Storage lrange error for key ${key}:`, error instanceof Error ? error.message : 'Unknown error');
       return [];
     }
   }
@@ -195,7 +225,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
         }
       }
     } catch (error) {
-      this.logger.warn(`Storage ltrim error for key ${key}:`, error.message);
+      this.logger.warn(`Storage ltrim error for key ${key}:`, error instanceof Error ? error.message : 'Unknown error');
     }
   }
 
@@ -215,7 +245,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
         }
       }
     } catch (error) {
-      this.logger.warn(`Storage expire error for key ${key}:`, error.message);
+      this.logger.warn(`Storage expire error for key ${key}:`, error instanceof Error ? error.message : 'Unknown error');
     }
   }
 
@@ -229,9 +259,9 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
         let set: Set<string> = new Set();
         
         if (existing && existing.value instanceof Set) {
-          set = existing.value;
+          set = existing.value as Set<string>;
         } else if (existing && Array.isArray(existing.value)) {
-          set = new Set(existing.value);
+          set = new Set(existing.value as string[]);
         }
         
         set.add(value);
@@ -241,7 +271,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
         };
       }
     } catch (error) {
-      this.logger.warn(`Storage sadd error for key ${key}:`, error.message);
+      this.logger.warn(`Storage sadd error for key ${key}:`, error instanceof Error ? error.message : 'Unknown error');
     }
   }
 
@@ -255,15 +285,15 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
         if (!item) return [];
         
         if (item.value instanceof Set) {
-          return Array.from(item.value);
+          return Array.from(item.value as Set<string>);
         } else if (Array.isArray(item.value)) {
-          return item.value;
+          return item.value as string[];
         }
         
         return [];
       }
     } catch (error) {
-      this.logger.warn(`Storage smembers error for key ${key}:`, error.message);
+      this.logger.warn(`Storage smembers error for key ${key}:`, error instanceof Error ? error.message : 'Unknown error');
       return [];
     }
   }
@@ -280,7 +310,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
         }
       }
     } catch (error) {
-      this.logger.warn(`Storage srem error for key ${key}:`, error.message);
+      this.logger.warn(`Storage srem error for key ${key}:`, error instanceof Error ? error.message : 'Unknown error');
     }
   }
 
@@ -297,13 +327,13 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
         if (index < 0) {
           // 음수 인덱스 처리
           const realIndex = list.length + index;
-          return realIndex >= 0 ? list[realIndex] : null;
+          return realIndex >= 0 ? (list[realIndex] ?? null) : null;
         }
         
-        return list[index] || null;
+        return list[index] ?? null;
       }
     } catch (error) {
-      this.logger.warn(`Storage lindex error for key ${key}:`, error.message);
+      this.logger.warn(`Storage lindex error for key ${key}:`, error instanceof Error ? error.message : 'Unknown error');
       return null;
     }
   }
@@ -317,7 +347,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
       keyCount: keys.length,
       estimatedSize: `${Math.round(size / 1024)}KB`,
       usingRedis: this.useRedis,
-      redisStatus: this.redisClient?.status || 'not connected',
+      redisStatus: this.redisClient?.status ?? 'not connected',
       keys: keys.slice(0, 10), // 처음 10개 키만
     };
   }
@@ -335,7 +365,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
           await this.redisClient.quit();
           this.logger.log('Redis connection closed gracefully');
         } catch (error) {
-          this.logger.warn('Error closing Redis connection:', error.message);
+          this.logger.warn('Error closing Redis connection:', error instanceof Error ? error.message : 'Unknown error');
         }
       }
 
@@ -344,7 +374,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
       this.logger.log('Memory store cleaned up');
       
     } catch (error) {
-      this.logger.error('Error during Redis service cleanup:', error.message);
+      this.logger.error('Error during Redis service cleanup:', error instanceof Error ? error.message : 'Unknown error');
     }
   }
 }

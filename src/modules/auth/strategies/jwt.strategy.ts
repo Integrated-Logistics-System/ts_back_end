@@ -1,4 +1,3 @@
-// backend/src/modules/auth/strategies/jwt.strategy.ts
 import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { PassportStrategy } from '@nestjs/passport';
 import { ExtractJwt, Strategy } from 'passport-jwt';
@@ -8,39 +7,21 @@ import { AuthService } from '../auth.service';
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy) {
   constructor(
-    private authService: AuthService,
-    private configService: ConfigService
+      private readonly configService: ConfigService,
+      private readonly authService: AuthService, // AuthService를 통해 간접 접근
   ) {
     super({
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
       ignoreExpiration: false,
-      secretOrKey: configService.get<string>('JWT_SECRET') || 'recipe-ai-ultra-secure-key-2024!@#$',
+      secretOrKey: configService.get<string>('JWT_SECRET') || 'recipe-ai-ultra-secure-key-2024!@#'
     });
-
-    console.log('🔑 JWT Strategy initialized with secret:',
-      configService.get<string>('JWT_SECRET') ? 'FROM_ENV' : 'DEFAULT'
-    );
   }
 
-  async validate(payload: any) {
-    console.log('🔍 JWT Strategy - Validating payload:', {
-      sub: payload.sub,
-      email: payload.email,
-      iat: payload.iat,
-      exp: payload.exp
-    });
-
+  async validate(payload: { sub: string; email?: string; iat?: number; exp?: number }) {
     const user = await this.authService.validateUserById(payload.sub);
     if (!user) {
-      console.log('❌ JWT Strategy - User not found for ID:', payload.sub);
-      throw new UnauthorizedException('User not found');
+      throw new UnauthorizedException('유효하지 않은 토큰입니다');
     }
-
-    console.log('✅ JWT Strategy - User validated:', {
-      id: user._id.toString(),
-      email: user.email
-    });
-
-    return { id: payload.sub, email: payload.email };
+    return user;
   }
 }

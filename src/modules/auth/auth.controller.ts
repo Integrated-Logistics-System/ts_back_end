@@ -1,8 +1,7 @@
-import { Controller, Post, Get, Put, Body, UseGuards, Request, HttpCode, HttpStatus } from '@nestjs/common';
+import { Controller, Post, Get, Body, HttpCode, HttpStatus, UnauthorizedException } from '@nestjs/common';
 import { AuthService } from './auth.service';
-import { JwtAuthGuard } from './guards/jwt-auth.guard';
-import { RegisterDto, LoginDto, UpdateProfileDto } from '../../shared/dto/auth.dto';
-import { ApiTags, ApiBearerAuth, ApiOperation, ApiResponse } from '@nestjs/swagger';
+import { RegisterDto, LoginDto } from '../../shared/dto/auth.dto';
+import { ApiTags, ApiOperation, ApiResponse, ApiBody } from '@nestjs/swagger';
 import { Public } from './decorators/public.decorator';
 
 @ApiTags('Authentication')
@@ -20,7 +19,8 @@ export class AuthController {
       message: 'AI Chat API with LangChain is running',
       timestamp: new Date().toISOString(),
       version: '1.0.0',
-      features: ['cookingLevel', 'preferences', 'allergies']
+      features: ['cookingLevel', 'preferences', 'allergies'],
+      note: 'Profile management moved to /users endpoint'
     };
   }
 
@@ -32,11 +32,11 @@ export class AuthController {
   @ApiResponse({ status: 409, description: 'Email already exists' })
   async register(@Body() registerDto: RegisterDto) {
     return this.authService.register(
-      registerDto.email,
-      registerDto.password,
-      registerDto.name,
-      registerDto.cookingLevel,
-      registerDto.preferences
+        registerDto.email,
+        registerDto.password,
+        registerDto.name,
+        registerDto.cookingLevel,
+        registerDto.preferences
     );
   }
 
@@ -50,91 +50,93 @@ export class AuthController {
     return this.authService.login(loginDto.email, loginDto.password);
   }
 
-  @Get('profile')
-  @UseGuards(JwtAuthGuard)
-  @ApiBearerAuth()
-  @ApiOperation({ summary: 'Get user profile with cooking preferences' })
-  @ApiResponse({ status: 200, description: 'Profile retrieved successfully' })
-  @ApiResponse({ status: 401, description: 'Unauthorized' })
-  async getProfile(@Request() req: any) {
-    const profile = await this.authService.getProfile(req.user.id);
-    return {
-      success: true,
-      user: profile
-    };
+  @Post('refresh')
+  @Public()
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Refresh access token using refresh token' })
+  @ApiResponse({ status: 200, description: 'Token refreshed successfully' })
+  @ApiResponse({ status: 401, description: 'Invalid or expired refresh token' })
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: {
+        refreshToken: {
+          type: 'string',
+          description: 'Valid refresh token',
+          example: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...'
+        }
+      },
+      required: ['refreshToken']
+    }
+  })
+  async refreshToken(@Body() body: { refreshToken: string }) {
+    if (!body.refreshToken) {
+      throw new UnauthorizedException('리프레시 토큰이 필요합니다');
+    }
+
+    try {
+      const result = await this.authService.refreshAccessToken(body.refreshToken);
+      return {
+        success: true,
+        message: '토큰 갱신 성공',
+        ...result
+      };
+    } catch (error) {
+      throw new UnauthorizedException('리프레시 토큰이 유효하지 않거나 만료되었습니다');
+    }
   }
 
-  @Put('profile')
-  @UseGuards(JwtAuthGuard)
-  @ApiBearerAuth()
-  @ApiOperation({ summary: 'Update user profile and cooking preferences' })
-  @ApiResponse({ status: 200, description: 'Profile updated successfully' })
-  @ApiResponse({ status: 401, description: 'Unauthorized' })
-  async updateProfile(
-    @Body() updateProfileDto: UpdateProfileDto,
-    @Request() req: any,
-  ) {
-    return this.authService.updateProfile(req.user.id, updateProfileDto);
-  }
+  @Post('logout')
+  @Public()
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Logout user and invalidate session' })
+  @ApiResponse({ status: 200, description: 'Logout successful' })
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: {
+        userId: {
+          type: 'string',
+          description: 'User ID to logout',
+          example: '507f1f77bcf86cd799439011'
+        }
+      },
+      required: ['userId']
+    }
+  })
+  async logout(@Body() body: { userId: string }) {
+    if (!body.userId) {
+      throw new UnauthorizedException('사용자 ID가 필요합니다');
+    }
 
-  // 새로운 요리 설정 전용 엔드포인트들
-  @Put('cooking-preferences')
-  @UseGuards(JwtAuthGuard)
-  @ApiBearerAuth()
-  @ApiOperation({ summary: 'Update only cooking level and preferences' })
-  @ApiResponse({ status: 200, description: 'Cooking preferences updated successfully' })
-  async updateCookingPreferences(
-    @Body() body: { cookingLevel?: string; preferences?: string[] },
-    @Request() req: any,
-  ) {
-    const { cookingLevel, preferences } = body;
-    return this.authService.updateProfile(req.user.id, {
-      cookingLevel,
-      preferences
-    });
-  }
-
-  @Put('allergies')
-  @UseGuards(JwtAuthGuard)
-  @ApiBearerAuth()
-  @ApiOperation({ summary: 'Update user allergies' })
-  @ApiResponse({ status: 200, description: 'Allergies updated successfully' })
-  async updateAllergies(
-    @Body() body: { allergies: string[] },
-    @Request() req: any,
-  ) {
-    console.log(`💾 Updating allergies for user ${req.user.id}:`, body.allergies);
-    const result = await this.authService.updateProfile(req.user.id, {
-      allergies: body.allergies
-    });
-    console.log(`✅ Allergies updated successfully:`, result);
+    const result = await this.authService.logout(body.userId);
     return result;
   }
 
-  @Get('allergies')
-  @UseGuards(JwtAuthGuard)
-  @ApiBearerAuth()
-  @ApiOperation({ summary: 'Get user allergies' })
-  @ApiResponse({ status: 200, description: 'Allergies retrieved successfully' })
-  async getAllergies(@Request() req: any) {
-    try {
-      const profile = await this.authService.getProfile(req.user.id);
-      
-      return {
-        success: true,
-        message: '알레르기 정보를 성공적으로 조회했습니다.',
-        data: {
-          allergies: profile.allergies || [],
-          userId: profile.id,
-          userEmail: profile.email
+  @Post('revoke-refresh-token')
+  @Public()
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Revoke refresh token for security purposes' })
+  @ApiResponse({ status: 200, description: 'Refresh token revoked successfully' })
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: {
+        userId: {
+          type: 'string',
+          description: 'User ID to revoke refresh token',
+          example: '507f1f77bcf86cd799439011'
         }
-      };
-    } catch (error) {
-      return {
-        success: false,
-        message: '알레르기 정보 조회 중 오류가 발생했습니다.',
-        error: error.message
-      };
+      },
+      required: ['userId']
     }
+  })
+  async revokeRefreshToken(@Body() body: { userId: string }) {
+    if (!body.userId) {
+      throw new UnauthorizedException('사용자 ID가 필요합니다');
+    }
+
+    const result = await this.authService.revokeRefreshToken(body.userId);
+    return result;
   }
 }

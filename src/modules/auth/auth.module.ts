@@ -1,13 +1,12 @@
-// backend/src/modules/auth/auth.module.ts
 import { Module } from '@nestjs/common';
 import { JwtModule } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
 import { ConfigModule, ConfigService } from '@nestjs/config';
-import { MongooseModule } from '@nestjs/mongoose';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { JwtStrategy } from './strategies/jwt.strategy';
-import { User, UserSchema } from './user.schema';
+import { UserModule } from '../user/user.module';
+import { CacheModule } from '../cache/cache.module'; // CacheModule 추가
 
 @Module({
   imports: [
@@ -23,10 +22,11 @@ import { User, UserSchema } from './user.schema';
       }),
       inject: [ConfigService],
     }),
-    MongooseModule.forFeature([{ name: User.name, schema: UserSchema }]),
+    UserModule, // User 모듈 import
+    CacheModule, // Cache 모듈 import (Redis 세션 관리용)
   ],
   controllers: [AuthController],
   providers: [AuthService, JwtStrategy],
-  exports: [AuthService, JwtModule], // JwtModule 추가
+  exports: [AuthService, JwtModule],
 })
 export class AuthModule {}

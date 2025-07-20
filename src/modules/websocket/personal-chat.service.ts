@@ -1,376 +1,452 @@
+// src/modules/websocket/personal-chat.service.ts (Minimal working version)
 import { Injectable, Logger } from '@nestjs/common';
-import { ChatOllama } from '@langchain/ollama';
-import {
-  ConversationChain,
-  LLMChain
-} from 'langchain/chains';
-import {
-  PromptTemplate,
-  ChatPromptTemplate,
-  HumanMessagePromptTemplate,
-  SystemMessagePromptTemplate
-} from '@langchain/core/prompts';
-import {
-  BaseMemory,
-} from 'langchain/memory';
-import {
-  BaseMessage,
-  HumanMessage,
-  AIMessage
-} from '@langchain/core/messages';
-import { RedisService } from '../redis/redis.service';
-import { AuthService } from '../auth/auth.service';
+import { AiService } from '../ai/ai.service';
+import { UserService } from '../user/user.service';
+import { CacheService } from '../cache/cache.service';
+import { LangGraphService } from '../langgraph/langgraph.service';
+import { RAGRecipeRequest } from '../../shared/interfaces/langgraph.interface';
+import { EnhancedIntentAnalyzer, EnhancedUserIntent } from './processors/enhanced-intent-analyzer.service';
 
-// Redis 기반 커스텀 메모리 클래스
-class RedisConversationMemory extends BaseMemory {
-  private redisService: RedisService;
-  private userId: string;
-  private logger = new Logger(RedisConversationMemory.name);
-
-  constructor(redisService: RedisService, userId: string) {
-    super();
-    this.redisService = redisService;
-    this.userId = userId;
-  }
-
-  get memoryKeys(): string[] {
-    return ['chat_history'];
-  }
-
-  async loadMemoryVariables(): Promise<{ chat_history: string }> {
-    try {
-      const key = `langchain_memory:${this.userId}`;
-      const historyData = await this.redisService.get(key);
-
-      if (!historyData) {
-        return { chat_history: '' };
-      }
-
-      const messages: BaseMessage[] = JSON.parse(historyData);
-      const chatHistory = messages
-        .map(msg => `${msg._getType() === 'human' ? 'Human' : 'AI'}: ${msg.content}`)
-        .join('\n');
-
-      return { chat_history: chatHistory };
-    } catch (error) {
-      this.logger.error('메모리 로드 실패:', error.message);
-      return { chat_history: '' };
-    }
-  }
-
-  async saveContext(
-    inputValues: Record<string, any>,
-    outputValues: Record<string, any>
-  ): Promise<void> {
-    try {
-      const key = `langchain_memory:${this.userId}`;
-
-      // 기존 메시지 로드
-      const existingData = await this.redisService.get(key);
-      const messages: BaseMessage[] = existingData ? JSON.parse(existingData) : [];
-
-      // 새 메시지 추가
-      messages.push(
-        new HumanMessage(inputValues.input || inputValues.question),
-        new AIMessage(outputValues.response || outputValues.text)
-      );
-
-      // 최근 20개 메시지만 유지
-      const recentMessages = messages.slice(-20);
-
-      // Redis에 저장 (7일 보관)
-      await this.redisService.set(
-        key,
-        JSON.stringify(recentMessages),
-        86400 * 7
-      );
-
-      this.logger.log(`메모리 저장 완료: ${this.userId}`);
-    } catch (error) {
-      this.logger.error('메모리 저장 실패:', error.message);
-    }
-  }
-
-  async clear(): Promise<void> {
-    try {
-      const key = `langchain_memory:${this.userId}`;
-      await this.redisService.del(key);
-      this.logger.log(`메모리 클리어: ${this.userId}`);
-    } catch (error) {
-      this.logger.error('메모리 클리어 실패:', error.message);
-    }
-  }
+export interface ChainStatusResponse {
+  aiService: {
+    isConnected: boolean;
+    provider: string;
+    model: string;
+  };
+  chat: {
+    messageCount: number;
+    hasHistory: boolean;
+    lastMessageTime: string | null;
+  };
+  user: {
+    name: string;
+    cookingLevel: string;
+    allergiesCount: number;
+    preferencesCount: number;
+  };
+  rag: {
+    enabled: boolean;
+    elasticsearchConnected: boolean;
+    recipesIndexed: boolean;
+  };
+  timestamp: string;
+  error?: string;
 }
 
-interface PersonalizedContext {
-  cookingLevel: string;
-  preferences: string[];
-  allergies: string[];
-  currentTime: string;
-  userName: string;
+export interface UserChatStatsResponse {
+  totalMessages: number;
+  userMessages: number;
+  aiMessages: number;
+  recipeRequests: number;
+  detailRequests: number;
+  error?: string;
+}
+
+interface ChatMessage {
+  role: 'user' | 'assistant';
+  content: string;
+  timestamp: number;
+  messageType?: 'general' | 'recipe' | 'detail';
 }
 
 @Injectable()
 export class PersonalChatService {
   private readonly logger = new Logger(PersonalChatService.name);
-  private chatModel: ChatOllama;
-  private systemPromptTemplate: ChatPromptTemplate;
+  private readonly MAX_HISTORY_SIZE = 20;
+  private readonly CACHE_TTL = 86400 * 7; // 7일
 
   constructor(
-    private redisService: RedisService,
-    private authService: AuthService,
+    private readonly aiService: AiService,
+    private readonly cacheService: CacheService,
+    private readonly userService: UserService,
+    private readonly langgraphService: LangGraphService,
+    private readonly enhancedIntentAnalyzer: EnhancedIntentAnalyzer,
   ) {
-    this.initializeLangChain();
+    this.logger.log('🚀 PersonalChatService initialized with Enhanced Intent Detection');
   }
 
-  private initializeLangChain() {
-    // ChatOllama 모델 초기화
-    this.chatModel = new ChatOllama({
-      baseUrl: process.env.OLLAMA_URL || 'http://localhost:11434',
-      model: process.env.OLLAMA_MODEL || 'gemma2:2b',
-      temperature: 0.7,
-      streaming: true,
-    });
-
-    // 시스템 프롬프트 템플릿 생성
-    this.systemPromptTemplate = ChatPromptTemplate.fromMessages([
-      SystemMessagePromptTemplate.fromTemplate(`당신은 친근한 AI 요리 어시스턴트입니다.
-
-사용자 정보:
-- 이름: {userName}
-- 요리 실력: {cookingLevel}
-- 알레르기: {allergies}
-- 선호도: {preferences}
-- 현재 시간: {currentTime}
-
-지침:
-1. 친근하고 도움이 되는 톤으로 답변
-2. 알레르기 재료는 절대 추천하지 않기
-3. 구체적이고 실용적인 조언 제공
-4. 한국어로 자연스럽게 답변
-5. 마크다운 형식 사용
-
-이전 대화:
-{chat_history}`),
-      HumanMessagePromptTemplate.fromTemplate('{input}')
-    ]);
-  }
+  // ==================== Main Chat Processing ====================
 
   async processPersonalizedChat(userId: string, message: string): Promise<AsyncIterable<string>> {
-    this.logger.log(`💬 LangChain 개인화 채팅 처리: "${message}"`);
-
+    this.logger.log(`💬 Processing enhanced context-aware chat for user: ${userId}`);
+    
     try {
-      // 개인화 컨텍스트 가져오기
-      const context = await this.getPersonalizedContext(userId);
+      // Get user context
+      const userProfile = await this.userService.getProfile(userId);
+      const conversationHistory = await this.getChatHistory(userId);
+      
+      // Build enhanced context
+      const context = {
+        userId,
+        userName: userProfile.name,
+        cookingLevel: userProfile.cookingLevel,
+        allergies: userProfile.allergies,
+        preferences: userProfile.preferences,
+        conversationHistory: conversationHistory.map((msg: ChatMessage) => ({
+          id: `${msg.timestamp}`,
+          role: msg.role,
+          content: msg.content,
+          timestamp: new Date(msg.timestamp),
+        })),
+        currentSession: {
+          sessionId: userId,
+          startTime: new Date(),
+          lastActivity: new Date(),
+          messageCount: conversationHistory.length,
+          recipeRequests: 0,
+        },
+      };
 
-      // Redis 기반 메모리 생성
-      const memory = new RedisConversationMemory(this.redisService, userId);
-
-      // ConversationChain 생성
-      const chain = new ConversationChain({
-        llm: this.chatModel,
-        prompt: this.systemPromptTemplate,
-        memory: memory,
-        verbose: true,
+      // Perform enhanced intent analysis
+      const analysisResult = await this.enhancedIntentAnalyzer.analyzeEnhancedConversationContext(message, context);
+      const intent = analysisResult.userIntent as EnhancedUserIntent;
+      
+      this.logger.log(`🧠 Intent Analysis Result:`, {
+        primaryIntent: intent.type,
+        confidence: intent.confidence,
+        entities: intent.entities?.length || 0,
+        sentiment: intent.sentiment,
+        urgency: intent.urgency,
       });
 
-      // 스트리밍 응답 생성
-      return this.streamResponse(chain, message, context);
-
+      // Route based on intent
+      return this.routeBasedOnIntent(userId, message, intent);
+      
     } catch (error) {
-      this.logger.error(`❌ LangChain 처리 오류:`, error.message);
-      return this.createErrorResponse(error.message);
+      this.logger.error('Enhanced intent analysis failed, falling back to simple processing:', error);
+      return this.processSimpleChat(userId, message);
     }
   }
 
-  private async *streamResponse(
-    chain: ConversationChain,
-    message: string,
-    context: PersonalizedContext
-  ): AsyncIterable<string> {
-    try {
-      // 컨텍스트와 함께 체인 실행
-      const stream = await chain.stream({
-        input: message,
-        userName: context.userName,
-        cookingLevel: context.cookingLevel,
-        allergies: context.allergies.join(', ') || '없음',
-        preferences: context.preferences.join(', ') || '없음',
-        currentTime: context.currentTime,
-      });
+  // ==================== Intent-based Routing ====================
 
-      // 스트림에서 응답 청크 생성
-      for await (const chunk of stream) {
-        if (chunk.response) {
-          yield chunk.response;
+  private async routeBasedOnIntent(userId: string, message: string, intent: EnhancedUserIntent): Promise<AsyncIterable<string>> {
+    switch (intent.type) {
+      case 'recipe_search':
+        return this.processRecipeSearch(userId, message, intent);
+      
+      case 'recipe_detail':
+        return this.processRecipeDetail(userId, message, intent);
+      
+      case 'ingredient_substitute':
+        return this.processIngredientSubstitute(userId, message, intent);
+      
+      case 'nutritional_info':
+        return this.processNutritionalInfo(userId, message, intent);
+      
+      case 'cooking_advice':
+        return this.processCookingAdvice(userId, message, intent);
+      
+      default:
+        return this.processSimpleChat(userId, message);
+    }
+  }
+
+  // ==================== Processing Methods ====================
+
+  private async processRecipeSearch(userId: string, message: string, intent: EnhancedUserIntent): Promise<AsyncIterable<string>> {
+    try {
+      const userProfile = await this.userService.getProfile(userId);
+      const userAllergies = [
+        ...(userProfile.allergies || []),
+        ...intent.entities?.filter(e => e.type === 'allergen').map(e => e.value) || []
+      ];
+
+      return this.transformWebSocketToString(
+        this.langgraphService.streamRecipeWorkflowForWebSocket(message, userAllergies, userId)
+      );
+    } catch (error) {
+      this.logger.error('Recipe search processing failed:', error);
+      return this.processSimpleChat(userId, message);
+    }
+  }
+
+  private async processRecipeDetail(userId: string, message: string, intent: EnhancedUserIntent): Promise<AsyncIterable<string>> {
+    const targetRecipe = intent.entities?.find(e => e.type === 'recipe')?.value;
+    if (!targetRecipe) {
+      return this.processSimpleChat(userId, message);
+    }
+
+    try {
+      const detailRequest: RAGRecipeRequest = {
+        query: `${targetRecipe}의 상세한 만드는 법과 조리 과정을 단계별로 알려주세요. ${message}`,
+        userAllergies: intent.entities?.filter(e => e.type === 'ingredient').map(e => e.value) || [],
+        preferences: intent.entities?.filter(e => e.type === 'cuisine_type').map(e => e.value) || [],
+      };
+
+      return this.transformWebSocketToString(
+        this.langgraphService.streamRAGForWebSocket(detailRequest, userId)
+      );
+    } catch (error) {
+      this.logger.error('Recipe detail processing failed:', error);
+      return this.processSimpleChat(userId, message);
+    }
+  }
+
+  private async processIngredientSubstitute(userId: string, message: string, intent: EnhancedUserIntent): Promise<AsyncIterable<string>> {
+    try {
+      const ragRequest: RAGRecipeRequest = {
+        query: `${message} - 재료 대체에 대한 조언을 제공해주세요.`,
+        userAllergies: intent.entities?.filter(e => e.type === 'allergen').map(e => e.value) || [],
+      };
+
+      return this.transformWebSocketToString(
+        this.langgraphService.streamRAGForWebSocket(ragRequest, userId)
+      );
+    } catch (error) {
+      this.logger.error('Ingredient substitute processing failed:', error);
+      return this.processSimpleChat(userId, message);
+    }
+  }
+
+  private async processNutritionalInfo(userId: string, message: string, intent: EnhancedUserIntent): Promise<AsyncIterable<string>> {
+    try {
+      const ragRequest: RAGRecipeRequest = {
+        query: `${message} - 영양 정보와 건강한 요리법에 대해 알려주세요.`,
+        userAllergies: intent.entities?.filter(e => e.type === 'allergen').map(e => e.value) || [],
+        preferences: ['건강한', '영양가'],
+      };
+
+      return this.transformWebSocketToString(
+        this.langgraphService.streamRAGForWebSocket(ragRequest, userId)
+      );
+    } catch (error) {
+      this.logger.error('Nutritional info processing failed:', error);
+      return this.processSimpleChat(userId, message);
+    }
+  }
+
+  private async processCookingAdvice(userId: string, message: string, intent: EnhancedUserIntent): Promise<AsyncIterable<string>> {
+    try {
+      const ragRequest: RAGRecipeRequest = {
+        query: `${message} - 요리 팁과 조언을 제공해주세요.`,
+        userAllergies: intent.entities?.filter(e => e.type === 'allergen').map(e => e.value) || [],
+      };
+
+      return this.transformWebSocketToString(
+        this.langgraphService.streamRAGForWebSocket(ragRequest, userId)
+      );
+    } catch (error) {
+      this.logger.error('Cooking advice processing failed:', error);
+      return this.processSimpleChat(userId, message);
+    }
+  }
+
+  private async processSimpleChat(userId: string, message: string): Promise<AsyncIterable<string>> {
+    try {
+      const userProfile = await this.userService.getProfile(userId);
+      const contextPrompt = `사용자 ${userProfile.name}님 (요리실력: ${userProfile.cookingLevel})의 질문: ${message}`;
+      
+      return this.transformAiStreamToString(this.aiService.streamText(contextPrompt));
+    } catch (error) {
+      this.logger.error('Simple chat processing failed:', error);
+      return this.transformAiStreamToString(this.aiService.streamText(message));
+    }
+  }
+
+  // ==================== Helper Methods ====================
+
+  private async* transformWebSocketToString(webSocketStream: AsyncIterable<any>): AsyncIterable<string> {
+    try {
+      for await (const chunk of webSocketStream) {
+        if (typeof chunk === 'string') {
+          yield chunk;
+        } else if (chunk && typeof chunk.content === 'string') {
+          yield chunk.content;
+        } else if (chunk && chunk.toString) {
+          yield chunk.toString();
         }
       }
-
     } catch (error) {
-      this.logger.error('스트리밍 오류:', error.message);
-      yield `죄송합니다. 응답 생성 중 오류가 발생했습니다: ${error.message}`;
+      this.logger.error('WebSocket stream transformation failed:', error);
+      yield `죄송합니다. 응답 처리 중 오류가 발생했습니다: ${error instanceof Error ? error.message : '알 수 없는 오류'}`;
     }
   }
 
-  private async *createErrorResponse(errorMessage: string): AsyncIterable<string> {
-    yield `죄송합니다. 요청을 처리하는 중 문제가 발생했습니다.\n\n`;
-    yield `**오류 내용**: ${errorMessage}\n\n`;
-    yield `다시 시도해주시거나, 다른 질문을 해주세요. 😊`;
-  }
-
-  async getPersonalizedContext(userId: string): Promise<PersonalizedContext> {
+  private async* transformAiStreamToString(aiStream: AsyncIterable<any>): AsyncIterable<string> {
     try {
-      const user = await this.authService.findById(userId);
-
-      return {
-        userName: user?.name || '사용자',
-        cookingLevel: user?.cookingLevel || '초급',
-        preferences: user?.preferences || [],
-        allergies: user?.allergies || [],
-        currentTime: this.getCurrentTimeContext(),
-      };
-    } catch (error) {
-      this.logger.error('개인화 컨텍스트 조회 실패:', error.message);
-      return {
-        userName: '사용자',
-        cookingLevel: '초급',
-        preferences: [],
-        allergies: [],
-        currentTime: this.getCurrentTimeContext(),
-      };
-    }
-  }
-
-  // LangChain 기반 대화 기록 조회
-  async getChatHistory(userId: string): Promise<any[]> {
-    try {
-      const memory = new RedisConversationMemory(this.redisService, userId);
-      const memoryData = await memory.loadMemoryVariables();
-
-      // 대화 기록을 파싱해서 반환
-      const chatHistory = memoryData.chat_history;
-      if (!chatHistory) return [];
-
-      const lines = chatHistory.split('\n');
-      const history = [];
-
-      for (let i = 0; i < lines.length; i += 2) {
-        if (lines[i] && lines[i + 1]) {
-          history.push({
-            role: lines[i].startsWith('Human:') ? 'user' : 'assistant',
-            content: lines[i].replace(/^(Human|AI):\s*/, ''),
-            timestamp: Date.now() - (lines.length - i) * 60000, // 임시 타임스탬프
-          });
+      for await (const chunk of aiStream) {
+        if (typeof chunk === 'string') {
+          yield chunk;
+        } else if (chunk && typeof chunk.content === 'string') {
+          yield chunk.content;
+        } else if (chunk && typeof chunk.text === 'string') {
+          yield chunk.text;
+        } else if (chunk && chunk.toString) {
+          yield chunk.toString();
         }
       }
-
-      return history;
     } catch (error) {
-      this.logger.error('대화 기록 조회 실패:', error.message);
+      this.logger.error('AI stream transformation failed:', error);
+      yield `죄송합니다. 응답 처리 중 오류가 발생했습니다: ${error instanceof Error ? error.message : '알 수 없는 오류'}`;
+    }
+  }
+
+  // ==================== Data Access Methods ====================
+
+  async getChatHistory(userId: string): Promise<ChatMessage[]> {
+    try {
+      const cacheKey = `chat_history:${userId}`;
+      const cachedHistory = await this.cacheService.get(cacheKey);
+      
+      if (cachedHistory && typeof cachedHistory === 'string') {
+        const history = JSON.parse(cachedHistory) as ChatMessage[];
+        return Array.isArray(history) ? history : [];
+      }
+      
+      return [];
+    } catch (error) {
+      this.logger.error('Failed to get chat history:', error);
       return [];
     }
   }
 
-  // LangChain 메모리 클리어
+  // ==================== Status Methods ====================
+
+  async getChainStatus(userId: string): Promise<ChainStatusResponse> {
+    try {
+      const userProfile = await this.userService.getProfile(userId);
+      const conversationHistory = await this.getChatHistory(userId);
+
+      return {
+        aiService: {
+          isConnected: true,
+          provider: 'openai',
+          model: 'gpt-4',
+        },
+        chat: {
+          messageCount: conversationHistory.length,
+          hasHistory: conversationHistory.length > 0,
+          lastMessageTime: conversationHistory.length > 0 
+            ? new Date(conversationHistory[conversationHistory.length - 1]?.timestamp || 0).toISOString()
+            : null,
+        },
+        user: {
+          name: userProfile.name,
+          cookingLevel: userProfile.cookingLevel,
+          allergiesCount: userProfile.allergies?.length || 0,
+          preferencesCount: userProfile.preferences?.length || 0,
+        },
+        rag: {
+          enabled: true,
+          elasticsearchConnected: true,
+          recipesIndexed: true,
+        },
+        timestamp: new Date().toISOString(),
+      };
+    } catch (error) {
+      this.logger.error('Failed to get chain status:', error);
+      return {
+        aiService: { isConnected: false, provider: 'unknown', model: 'unknown' },
+        chat: { messageCount: 0, hasHistory: false, lastMessageTime: null },
+        user: { name: 'Unknown', cookingLevel: 'unknown', allergiesCount: 0, preferencesCount: 0 },
+        rag: { enabled: false, elasticsearchConnected: false, recipesIndexed: false },
+        timestamp: new Date().toISOString(),
+        error: error instanceof Error ? error.message : '알 수 없는 오류',
+      };
+    }
+  }
+
+  async getUserChatStats(userId: string): Promise<UserChatStatsResponse> {
+    try {
+      const conversationHistory = await this.getChatHistory(userId);
+      
+      const userMessages = conversationHistory.filter(msg => msg.role === 'user');
+      const aiMessages = conversationHistory.filter(msg => msg.role === 'assistant');
+      const recipeRequests = conversationHistory.filter(msg => msg.messageType === 'recipe');
+      const detailRequests = conversationHistory.filter(msg => msg.messageType === 'detail');
+
+      return {
+        totalMessages: conversationHistory.length,
+        userMessages: userMessages.length,
+        aiMessages: aiMessages.length,
+        recipeRequests: recipeRequests.length,
+        detailRequests: detailRequests.length,
+      };
+    } catch (error) {
+      this.logger.error('Failed to get user chat stats:', error);
+      return {
+        totalMessages: 0,
+        userMessages: 0,
+        aiMessages: 0,
+        recipeRequests: 0,
+        detailRequests: 0,
+        error: error instanceof Error ? error.message : '알 수 없는 오류',
+      };
+    }
+  }
+
+  async addChatMessage(userId: string, role: 'user' | 'assistant', content: string, messageType: 'recipe' | 'detail' | 'general' = 'general'): Promise<void> {
+    try {
+      const cacheKey = `chat_history:${userId}`;
+      const currentHistory = await this.getChatHistory(userId);
+      
+      const newMessage: ChatMessage = {
+        role,
+        content,
+        messageType,
+        timestamp: Date.now(),
+      };
+      
+      // 새 메시지를 히스토리에 추가
+      const updatedHistory = [...currentHistory, newMessage];
+      
+      // 최대 50개 메시지로 제한
+      const trimmedHistory = updatedHistory.slice(-50);
+      
+      // 캐시에 저장 (24시간)
+      await this.cacheService.set(cacheKey, JSON.stringify(trimmedHistory), 86400);
+      
+      this.logger.debug(`💾 Chat message saved for user: ${userId}, role: ${role}, type: ${messageType}`);
+    } catch (error) {
+      this.logger.error(`Add chat message failed for user ${userId}:`, error);
+      // 메시지 저장 실패해도 채팅은 계속 진행
+    }
+  }
+
   async clearChatHistory(userId: string): Promise<void> {
     try {
-      const memory = new RedisConversationMemory(this.redisService, userId);
-      await memory.clear();
-      this.logger.log(`🗑️ LangChain 대화 기록 클리어: ${userId}`);
+      // 1. PersonalChatService 캐시 삭제
+      const cacheKey = `chat_history:${userId}`;
+      await this.cacheService.del(cacheKey);
+      
+      // 2. 기타 관련 캐시 키들도 삭제
+      const contextKey = `user_context:${userId}`;
+      await this.cacheService.del(contextKey);
+      
+      // 3. 사용자별 통계 캐시 삭제
+      const statsKey = `user_stats:${userId}`;
+      await this.cacheService.del(statsKey);
+      
+      this.logger.log(`💥 All chat history and caches cleared for user: ${userId}`);
     } catch (error) {
-      this.logger.error(`❌ 대화 기록 클리어 실패:`, error.message);
+      this.logger.error('Failed to clear chat history:', error);
       throw error;
     }
   }
 
-  // 레시피 전용 체인 생성 (고급 기능)
-  async createRecipeChain(userId: string): Promise<LLMChain> {
-    const recipePrompt = PromptTemplate.fromTemplate(`
-당신은 전문 요리사 AI입니다.
+  // ==================== Private Helper Methods ====================
 
-사용자 요청: {input}
-사용자 알레르기: {allergies}
-선호하는 요리 스타일: {preferences}
-
-다음 형식으로 레시피를 제공해주세요:
-
-## 🍳 요리명
-
-**재료 (2인분):**
-- 재료 1: 양
-- 재료 2: 양
-
-**조리법:**
-1. 단계 1
-2. 단계 2
-
-**팁:**
-- 유용한 팁
-
-**주의사항:**
-- 알레르기 관련 주의사항
-`);
-
-    const memory = new RedisConversationMemory(this.redisService, `${userId}_recipe`);
-
-    return new LLMChain({
-      llm: this.chatModel,
-      prompt: recipePrompt,
-      memory: memory,
-    });
+  private shouldUseRAG(message: string): boolean {
+    const ragKeywords = [
+      '레시피', '요리', '음식', '만드는', '조리법', '재료', '만들어',
+      '추천', '알려줘', '가르쳐', '도움', '방법', '과정'
+    ];
+    
+    const messageToCheck = message.toLowerCase();
+    return ragKeywords.some(keyword => messageToCheck.includes(keyword));
   }
 
-  // RAG 체인 생성 (향후 확장용)
-  async createRAGChain(userId: string): Promise<LLMChain> {
-    // 향후 Elasticsearch 검색 결과를 컨텍스트로 활용하는 RAG 체인
-    const ragPrompt = PromptTemplate.fromTemplate(`
-검색된 레시피 정보:
-{context}
-
-사용자 질문: {input}
-사용자 알레르기: {allergies}
-
-위 검색 결과를 바탕으로 사용자의 알레르기를 고려하여 안전하고 맛있는 레시피를 추천해주세요.
-`);
-
-    const memory = new RedisConversationMemory(this.redisService, `${userId}_rag`);
-
-    return new LLMChain({
-      llm: this.chatModel,
-      prompt: ragPrompt,
-      memory: memory,
-    });
-  }
-
-  private getCurrentTimeContext(): string {
-    const now = new Date();
-    const hour = now.getHours();
-
-    if (hour < 10) return '아침 시간';
-    if (hour < 14) return '점심 시간';
-    if (hour < 18) return '오후 시간';
-    if (hour < 21) return '저녁 시간';
-    return '밤 시간';
-  }
-
-  // 체인 상태 확인 (디버깅용)
-  async getChainStatus(userId: string): Promise<any> {
-    try {
-      const memory = new RedisConversationMemory(this.redisService, userId);
-      const memoryData = await memory.loadMemoryVariables();
-      const context = await this.getPersonalizedContext(userId);
-
-      return {
-        model: this.chatModel.model,
-        temperature: this.chatModel.temperature,
-        hasMemory: !!memoryData.chat_history,
-        memoryLength: memoryData.chat_history.split('\n').length,
-        userContext: context,
-        timestamp: new Date().toISOString(),
-      };
-    } catch (error) {
-      this.logger.error('체인 상태 확인 실패:', error.message);
-      return { error: error.message };
+  private shouldUseRAGEnhanced(message: string, intent: EnhancedUserIntent): boolean {
+    // Enhanced RAG decision based on intent analysis
+    if (['recipe_search', 'recipe_detail', 'ingredient_substitute', 'nutritional_info'].includes(intent.type)) {
+      return true;
     }
+    
+    if (intent.confidence > 0.7 && intent.entities && intent.entities.length > 0) {
+      return true;
+    }
+    
+    return this.shouldUseRAG(message);
   }
 }
