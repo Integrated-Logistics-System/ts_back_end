@@ -1,61 +1,55 @@
-// src/modules/langgraph/langgraph.module.ts - 모듈화된 LangGraph 모듈
+// src/modules/langgraph/langgraph.module.ts - LangGraph 모듈 (WebSocket 전용)
 import { Module } from '@nestjs/common';
+import { ConfigModule } from '@nestjs/config';
 import { LangGraphService } from './langgraph.service';
-import { LanggraphController } from './langgraph.controller';
-import { ElasticsearchModule } from '../elasticsearch/elasticsearch.module';
 import { UserModule } from '../user/user.module';
-import { ChatModule } from '../chat/chat.module';
+import { CacheModule } from '../cache/cache.module';
+import { ElasticsearchModule } from '../elasticsearch/elasticsearch.module';
 
 // 워크플로우 관련
 import { WorkflowBuilder } from './workflow/workflow.builder';
-import { AnalyzeNode } from './workflow/nodes/analyze.node';
-import { SearchNode } from './workflow/nodes/search.node';
-import { GenerateNode } from './workflow/nodes/generate.node';
-import { ResponseNode } from './workflow/nodes/response.node';
 
-// 스트리밍 관련
-import { StreamHandler } from './streaming/stream.handler';
-import { WebSocketAdapter } from './streaming/websocket.adapter';
-
-// 포맷터 관련
-import { RecipeFormatter } from './formatters/recipe.formatter';
-import { ResponseFormatter } from './formatters/response.formatter';
-
-// 유틸리티 관련
-import { RecipeUtils } from './utils/recipe.utils';
-import { ValidationUtils } from './utils/validation.utils';
+// 독립적인 노드들
+import {
+  IntentAnalysisNode,
+  RecipeSearchNode,
+  CookingHelpNode,
+  GeneralChatNode,
+  ResponseIntegrationNode,
+} from './workflow/nodes';
 
 @Module({
   imports: [
-    ElasticsearchModule, // 레시피 검색용
-    UserModule, // 사용자 정보 관련
-    ChatModule, // 대화 히스토리 및 RAG
-    // CacheModule과 AiModule은 Global이므로 import 불필요
+    ConfigModule,
+    UserModule, // 사용자 상태 서비스용
+    CacheModule, // 캐싱용
+    ElasticsearchModule, // 벡터 검색용
   ],
-  controllers: [LanggraphController],
+  controllers: [
+    // REST API 제거 - WebSocket 전용
+  ],
   providers: [
-    // 메인 서비스
+    // LangGraph v0.3.8 서비스
     LangGraphService,
-    
-    // 워크플로우 관련
     WorkflowBuilder,
-    AnalyzeNode,
-    SearchNode,
-    GenerateNode,
-    ResponseNode,
     
-    // 스트리밍 관련
-    StreamHandler,
-    WebSocketAdapter,
-    
-    // 포맷터 관련
-    RecipeFormatter,
-    ResponseFormatter,
-    
-    // 유틸리티 관련
-    RecipeUtils,
-    ValidationUtils,
+    // 독립적인 워크플로우 노드들
+    IntentAnalysisNode,
+    RecipeSearchNode,
+    CookingHelpNode,
+    GeneralChatNode,
+    ResponseIntegrationNode,
   ],
-  exports: [LangGraphService],
+  exports: [
+    LangGraphService, // LangGraph v0.3.8 WebSocket 서비스
+    WorkflowBuilder, // 워크플로우 빌더
+    
+    // 노드들도 export (다른 모듈에서 사용할 수 있도록)
+    IntentAnalysisNode,
+    RecipeSearchNode,
+    CookingHelpNode,
+    GeneralChatNode,
+    ResponseIntegrationNode,
+  ],
 })
 export class LanggraphModule {}

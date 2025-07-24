@@ -2,194 +2,221 @@ import { Injectable, Logger } from '@nestjs/common';
 import { StateGraph } from '@langchain/langgraph';
 import { BaseMessage } from '@langchain/core/messages';
 import { Runnable } from '@langchain/core/runnables';
-import { ElasticsearchRecipe } from '@/modules/elasticsearch/elasticsearch.service';
-import { GraphState, NodeName, UserProfile } from '../types/workflow.types';
-import { AnalyzeNode } from './nodes/analyze.node';
-import { SearchNode } from './nodes/search.node';
-import { GenerateNode } from './nodes/generate.node';
-import { ResponseNode } from './nodes/response.node';
-import { ValidationUtils } from '../utils/validation.utils';
+import { 
+  IntentAnalysisNode,
+  RecipeSearchNode,
+  CookingHelpNode,
+  GeneralChatNode,
+  ResponseIntegrationNode
+} from './nodes';
+
+/**
+ * Refactored LangGraph Workflow Builder
+ * Uses modular node architecture for better maintainability
+ */
+
+export interface GraphState {
+  // Basic input
+  query: string;
+  userId?: string;
+  userStatus?: string; // "나의 상태" 개인화 컨텍스트
+  
+  // Intent analysis results
+  intent: 'recipe_search' | 'cooking_help' | 'general_chat' | 'unknown';
+  confidence: number;
+  
+  // Processing results
+  response: string;
+  metadata: {
+    processingTime: number;
+    intentAnalysisTime: number;
+    responseGenerationTime: number;
+    timestamp: string;
+    [key: string]: any; // Allow additional metadata fields
+  };
+}
 
 @Injectable()
 export class WorkflowBuilder {
   private readonly logger = new Logger(WorkflowBuilder.name);
 
   constructor(
-    private readonly analyzeNode: AnalyzeNode,
-    private readonly searchNode: SearchNode,
-    private readonly generateNode: GenerateNode,
-    private readonly responseNode: ResponseNode,
-    private readonly validationUtils: ValidationUtils,
+    private readonly intentAnalysisNode: IntentAnalysisNode,
+    private readonly recipeSearchNode: RecipeSearchNode,
+    private readonly cookingHelpNode: CookingHelpNode,
+    private readonly generalChatNode: GeneralChatNode,
+    private readonly responseIntegrationNode: ResponseIntegrationNode,
   ) {}
 
   /**
-   * LangGraph 워크플로우 생성
+   * Build modular workflow with independent nodes
+   * [Intent Analysis] → [Conditional Processing] → [Response Integration]
    */
-  buildWorkflow(): Runnable<GraphState, GraphState> {
-    this.logger.log('🔧 Building LangGraph workflow...');
+  buildWorkflow(): any {
+    this.logger.log('🔧 Building modular LangGraph workflow...');
 
     const graph = new StateGraph<GraphState>({
       channels: this.buildChannels(),
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    } as any);
+    });
 
-    // 노드 추가
+    // Add modular nodes
     this.addNodes(graph);
-
-    // 엣지 추가
     this.addEdges(graph);
 
-    // 워크플로우 컴파일
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment
-    const workflow = graph.compile() as any;
-
-    this.logger.log('✅ LangGraph workflow built successfully');
+    const workflow = graph.compile();
+    this.logger.log('✅ Modular LangGraph workflow built successfully');
+    
     return workflow;
   }
 
   /**
-   * 상태 채널 정의
+   * Simplified state channels configuration
    */
   private buildChannels() {
     return {
-      messages: {
-        value: (x: BaseMessage[], y: BaseMessage[]) => x.concat(y),
-        default: () => [],
-      },
       query: {
         value: (x: string, y: string) => y ?? x,
         default: () => '',
       },
-      userAllergies: {
-        value: (x: string[], y: string[]) => y ?? x,
-        default: () => [],
-      },
       userId: {
-        value: (x: string | null, y: string | null) => y ?? x,
-        default: () => null,
+        value: (x: string | undefined, y: string | undefined) => y ?? x,
+        default: () => undefined,
       },
-      userProfile: {
-        value: (x: UserProfile | null, y: UserProfile | null) => y ?? x,
-        default: () => null,
+      userStatus: {
+        value: (x: string | undefined, y: string | undefined) => y ?? x,
+        default: () => undefined,
       },
-      searchResults: {
-        value: (x: ElasticsearchRecipe[], y: ElasticsearchRecipe[]) => y ?? x,
-        default: () => [],
+      intent: {
+        value: (x: GraphState['intent'], y: GraphState['intent']) => y ?? x,
+        default: () => 'unknown' as const,
       },
-      generatedRecipe: {
-        value: (x: ElasticsearchRecipe | null, y: ElasticsearchRecipe | null) => y ?? x,
-        default: () => null,
+      confidence: {
+        value: (x: number, y: number) => y ?? x,
+        default: () => 0,
       },
-      finalResponse: {
+      response: {
         value: (x: string, y: string) => y ?? x,
         default: () => '',
-      },
-      currentStep: {
-        value: (x: string, y: string) => y ?? x,
-        default: () => 'start',
       },
       metadata: {
         value: (x: GraphState['metadata'], y: GraphState['metadata']) => ({ ...x, ...y }),
         default: () => ({
-          searchTime: 0,
-          generationTime: 0,
-          totalTime: 0,
+          processingTime: 0,
+          intentAnalysisTime: 0,
+          responseGenerationTime: 0,
+          timestamp: new Date().toISOString(),
         }),
       },
     };
   }
 
   /**
-   * 워크플로우 노드 추가
+   * Add modular nodes using dependency injection
    */
-  private addNodes(graph: StateGraph<GraphState>) {
-    this.logger.log('🔗 Adding workflow nodes...');
+  private addNodes(graph: any) {
+    this.logger.log('🔗 Adding modular workflow nodes...');
 
-    // 각 노드를 바인딩하여 추가
-    graph.addNode('analyze_query' as NodeName, this.analyzeNode.analyzeQuery.bind(this.analyzeNode));
-    graph.addNode('search_recipes' as NodeName, this.searchNode.searchRecipes.bind(this.searchNode));
-    graph.addNode('generate_recipe' as NodeName, this.generateNode.generateRecipe.bind(this.generateNode));
-    graph.addNode('create_response' as NodeName, this.responseNode.createResponse.bind(this.responseNode));
+    // Add nodes using the process method for consistent error handling
+    graph.addNode('intent_analysis', 
+      (state: GraphState) => this.intentAnalysisNode.process(state)
+    );
+    graph.addNode('recipe_search', 
+      (state: GraphState) => this.recipeSearchNode.process(state)
+    );
+    graph.addNode('cooking_help', 
+      (state: GraphState) => this.cookingHelpNode.process(state)
+    );
+    graph.addNode('general_chat', 
+      (state: GraphState) => this.generalChatNode.process(state)
+    );
+    graph.addNode('response_integration', 
+      (state: GraphState) => this.responseIntegrationNode.process(state)
+    );
 
-    this.logger.log('✅ All nodes added successfully');
+    this.logger.log('✅ Modular nodes added successfully');
   }
 
   /**
-   * 워크플로우 엣지 추가
+   * Add workflow edges for conditional routing
    */
-  private addEdges(graph: StateGraph<GraphState>) {
+  private addEdges(graph: any) {
     this.logger.log('🔗 Adding workflow edges...');
 
-    // 시작 엣지
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    graph.addEdge("__start__" as any, 'analyze_query' as any);
+    // Start → Intent Analysis
+    graph.addEdge("__start__", 'intent_analysis');
 
-    // 조건부 엣지: 쿼리 분석 결과에 따라 분기
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    graph.addConditionalEdges('analyze_query' as any, (state: GraphState) => {
-      const nextNode = this.validationUtils.isRecipeRelated(state.query) ? 'search_recipes' : 'create_response';
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-return, @typescript-eslint/no-explicit-any
-      return nextNode as any;
+    // Intent Analysis → Conditional branching
+    graph.addConditionalEdges('intent_analysis', (state: GraphState) => {
+      this.logger.log(`🎯 Routing based on intent: ${state.intent} (confidence: ${state.confidence})`);
+      
+      switch (state.intent) {
+        case 'recipe_search':
+          return 'recipe_search';
+        case 'cooking_help':
+          return 'cooking_help';
+        case 'general_chat':
+          return 'general_chat';
+        default:
+          this.logger.warn(`⚠️ Unknown intent '${state.intent}', defaulting to general_chat`);
+          return 'general_chat'; // Safe fallback
+      }
     }, {
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-explicit-any
-      'search_recipes': 'search_recipes' as any,
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-explicit-any
-      'create_response': 'create_response' as any
+      'recipe_search': 'recipe_search',
+      'cooking_help': 'cooking_help',
+      'general_chat': 'general_chat',
     });
 
-    // 조건부 엣지: 검색 결과에 따라 분기
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    graph.addConditionalEdges('search_recipes' as any, (state: GraphState) => {
-      // 검색 결과가 있으면 바로 응답 생성, 없으면 AI 레시피 생성
-      const nextNode = (state.searchResults && state.searchResults.length > 0) ? 'create_response' : 'generate_recipe';
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-return, @typescript-eslint/no-explicit-any
-      return nextNode as any;
-    }, {
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-explicit-any
-      'generate_recipe': 'generate_recipe' as any,
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-explicit-any
-      'create_response': 'create_response' as any
-    });
+    // All processing nodes → Response Integration
+    graph.addEdge('recipe_search', 'response_integration');
+    graph.addEdge('cooking_help', 'response_integration');
+    graph.addEdge('general_chat', 'response_integration');
+    
+    // Response Integration → End
+    graph.addEdge('response_integration', "__end__");
 
-    // AI 생성 후 응답으로
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    graph.addEdge('generate_recipe' as any, 'create_response' as any);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    graph.addEdge('create_response' as any, "__end__" as any);
-
-    this.logger.log('✅ All edges added successfully');
+    this.logger.log('✅ Workflow edges added successfully');
   }
 
   /**
-   * 워크플로우 상태 검증
+   * Create initial state for workflow execution
+   */
+  createInitialState(query: string, userId?: string): GraphState {
+    return {
+      query: query.trim(),
+      userId,
+      userStatus: undefined,
+      intent: 'unknown',
+      confidence: 0,
+      response: '',
+      metadata: {
+        processingTime: 0,
+        intentAnalysisTime: 0,
+        responseGenerationTime: 0,
+        timestamp: new Date().toISOString(),
+      },
+    };
+  }
+
+  /**
+   * Validate workflow state for debugging
    */
   validateWorkflowState(state: GraphState): { isValid: boolean; errors: string[] } {
     const errors: string[] = [];
 
-    // 필수 필드 검증
     if (!state.query || state.query.trim().length === 0) {
       errors.push('Query is required');
-    }
-
-    if (!state.currentStep) {
-      errors.push('Current step is required');
     }
 
     if (!state.metadata) {
       errors.push('Metadata is required');
     }
 
-    // 배열 필드 검증
-    if (!Array.isArray(state.messages)) {
-      errors.push('Messages must be an array');
+    if (!['recipe_search', 'cooking_help', 'general_chat', 'unknown'].includes(state.intent)) {
+      errors.push('Invalid intent');
     }
 
-    if (!Array.isArray(state.userAllergies)) {
-      errors.push('User allergies must be an array');
-    }
-
-    if (!Array.isArray(state.searchResults)) {
-      errors.push('Search results must be an array');
+    if (typeof state.confidence !== 'number' || state.confidence < 0 || state.confidence > 1) {
+      errors.push('Confidence must be a number between 0 and 1');
     }
 
     return {
@@ -199,121 +226,17 @@ export class WorkflowBuilder {
   }
 
   /**
-   * 초기 상태 생성
+   * Get workflow statistics for monitoring
    */
-  createInitialState(
-    query: string,
-    allergies: string[] = [],
-    userId: string | null = null,
-    userProfile: UserProfile | null = null,
-  ): GraphState {
+  getWorkflowStats(state: GraphState) {
     return {
-      messages: [],
-      query: query.trim(),
-      userAllergies: allergies,
-      userId,
-      userProfile,
-      searchResults: [],
-      generatedRecipe: null,
-      finalResponse: '',
-      currentStep: 'start',
-      metadata: {
-        searchTime: 0,
-        generationTime: 0,
-        totalTime: 0,
-      },
-    };
-  }
-
-  /**
-   * 워크플로우 실행 통계 생성
-   */
-  generateExecutionStats(state: GraphState): Record<string, any> {
-    const stats = {
-      query: state.query,
-      currentStep: state.currentStep,
-      searchResultsCount: state.searchResults.length,
-      hasGeneratedRecipe: !!state.generatedRecipe,
-      allergies: state.userAllergies,
-      timing: {
-        searchTime: state.metadata.searchTime,
-        generationTime: state.metadata.generationTime,
-        totalTime: state.metadata.totalTime,
-      },
-      responseLength: state.finalResponse.length,
-      timestamp: new Date().toISOString(),
-    };
-
-    return stats;
-  }
-
-  /**
-   * 워크플로우 성능 메트릭 계산
-   */
-  calculatePerformanceMetrics(state: GraphState): Record<string, any> {
-    const totalTime = state.metadata.totalTime;
-    const searchTime = state.metadata.searchTime;
-    const generationTime = state.metadata.generationTime;
-    
-    const searchPercentage = totalTime > 0 ? (searchTime / totalTime) * 100 : 0;
-    const generationPercentage = totalTime > 0 ? (generationTime / totalTime) * 100 : 0;
-
-    return {
-      totalExecutionTime: totalTime,
-      searchTimePercentage: Math.round(searchPercentage),
-      generationTimePercentage: Math.round(generationPercentage),
-      averageTimePerResult: state.searchResults.length > 0 ? searchTime / state.searchResults.length : 0,
-      throughput: totalTime > 0 ? 1000 / totalTime : 0, // requests per second
-      efficiency: this.calculateEfficiency(state),
-    };
-  }
-
-  /**
-   * 워크플로우 효율성 계산
-   */
-  private calculateEfficiency(state: GraphState): number {
-    let efficiency = 0;
-    
-    // 검색 효율성
-    if (state.searchResults.length > 0) {
-      efficiency += 0.3;
-    }
-    
-    // 생성 효율성
-    if (state.generatedRecipe) {
-      efficiency += 0.4;
-    }
-    
-    // 응답 효율성
-    if (state.finalResponse.length > 0) {
-      efficiency += 0.3;
-    }
-    
-    // 시간 효율성 (30초 이하면 보너스)
-    if (state.metadata.totalTime < 30000) {
-      efficiency += 0.1;
-    }
-    
-    return Math.min(efficiency, 1.0);
-  }
-
-  /**
-   * 워크플로우 디버그 정보 생성
-   */
-  generateDebugInfo(state: GraphState): Record<string, any> {
-    return {
-      stateSnapshot: {
-        query: state.query,
-        currentStep: state.currentStep,
-        userAllergies: state.userAllergies,
-        searchResultsCount: state.searchResults.length,
-        hasGeneratedRecipe: !!state.generatedRecipe,
-        finalResponseLength: state.finalResponse.length,
-      },
-      metadata: state.metadata,
-      validation: this.validateWorkflowState(state),
-      performance: this.calculatePerformanceMetrics(state),
-      timestamp: new Date().toISOString(),
+      totalTime: state.metadata.processingTime,
+      intentAnalysisTime: state.metadata.intentAnalysisTime,
+      responseTime: state.metadata.responseGenerationTime,
+      intent: state.intent,
+      confidence: state.confidence,
+      hasUserContext: !!state.userStatus,
+      responseLength: state.response.length,
     };
   }
 }
