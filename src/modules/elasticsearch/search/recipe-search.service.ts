@@ -8,9 +8,13 @@ import {
   SearchResult,
   ElasticsearchResponse,
   ElasticsearchHit,
+  VectorSearchOptions,
+  VectorSearchResult,
+  VectorSearchResponse,
 } from '../types/elasticsearch.types';
 import { QueryBuilder } from '../utils/query-builder.util';
 import { ResponseFormatter } from '../utils/response-formatter.util';
+import { EmbeddingService } from '../../embedding/embedding.service';
 
 @Injectable()
 export class RecipeSearchService {
@@ -21,6 +25,7 @@ export class RecipeSearchService {
     private readonly configService: ConfigService,
     private readonly queryBuilder: QueryBuilder,
     private readonly responseFormatter: ResponseFormatter,
+    private readonly embeddingService: EmbeddingService,
     @Inject('ELASTICSEARCH_CLIENT') private readonly client: Client,
   ) {}
 
@@ -223,6 +228,73 @@ export class RecipeSearchService {
     }
   }
 
+  /**
+   * 벡터 검색 (의미적 유사도 기반)
+   * 768차원 granite-embedding 벡터를 사용한 유사도 검색
+   */
+  async vectorSearch(options: VectorSearchOptions): Promise<VectorSearchResponse> {
+    const startTime = Date.now();
+    
+    try {
+      this.logger.log(`🔍 Vector search for query: "${options.query}"`);
+      
+      // 기본값 설정
+      const k = options.k || 10;
+      const vectorWeight = options.vectorWeight || 0.6;
+      const textWeight = options.textWeight || 0.4;
+      const useHybridSearch = options.useHybridSearch !== false;
+      const minScore = options.minScore || 0.1;
+
+      // 쿼리 임베딩 생성
+      const embeddingStartTime = Date.now();
+      const queryEmbedding = await this.generateQueryEmbedding(options.query);
+      const embeddingTime = Date.now() - embeddingStartTime;
+      
+      this.logger.log(`🧠 Query embedding generated in ${embeddingTime}ms`);
+
+      // 검색 쿼리 구성
+      const searchQuery = this.buildVectorSearchQuery(
+        queryEmbedding,
+        options,
+        k,
+        vectorWeight,
+        textWeight,
+        useHybridSearch,
+        minScore
+      );
+
+      // Elasticsearch 실행
+      const esStartTime = Date.now();
+      const response = await this.executeSearch(searchQuery);
+      const esTime = Date.now() - esStartTime;
+
+      // 결과 포맷팅
+      const results = this.formatVectorSearchResults(response, vectorWeight, textWeight);
+      const totalTime = Date.now() - startTime;
+
+      this.logger.log(`✅ Vector search completed: ${results.length} results in ${totalTime}ms`);
+
+      return {
+        results,
+        total: response.hits.total.value,
+        maxScore: response.hits.hits.length > 0 ? Math.max(...response.hits.hits.map(hit => hit._score || 0)) : 0,
+        searchTime: totalTime,
+        searchMethod: useHybridSearch ? 'hybrid' : 'vector',
+        metadata: {
+          vectorWeight,
+          textWeight,
+          queryEmbeddingTime: embeddingTime,
+          elasticsearchTime: esTime,
+          k,
+        },
+      };
+
+    } catch (error) {
+      this.logger.error('Vector search failed:', error);
+      throw new Error(`Vector search failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
   // ==================== Private Helper Methods ====================
 
   private async executeSearch(query: object): Promise<ElasticsearchResponse<ElasticsearchRecipe>> {
@@ -276,5 +348,151 @@ export class RecipeSearchService {
     const totalResults = response.hits.total.value;
     
     return (page * limit) < totalResults;
+  }
+
+  // ==================== Vector Search Helper Methods ====================
+
+  /**
+   * 쿼리 임베딩 생성 (EmbeddingService 사용)
+   */
+  private async generateQueryEmbedding(query: string): Promise<number[]> {
+    try {
+      // 실제 EmbeddingService를 사용하여 쿼리 임베딩 생성
+      const embedding = await this.embeddingService.embedQuery(query);
+      
+      this.logger.log(`🧠 Generated ${embedding.length}-dimensional embedding for query`);
+      return embedding;
+      
+    } catch (error) {
+      this.logger.error('Failed to generate query embedding:', error);
+      throw new Error('Query embedding generation failed');
+    }
+  }
+
+  /**
+   * 벡터 검색 쿼리 구성
+   */
+  private buildVectorSearchQuery(
+    queryEmbedding: number[],
+    options: VectorSearchOptions,
+    k: number,
+    vectorWeight: number,
+    textWeight: number,
+    useHybridSearch: boolean,
+    minScore: number
+  ): object {
+    const vectorQuery = {
+      script_score: {
+        query: {
+          bool: {
+            filter: [
+              { exists: { field: 'embedding' } },
+              // 알레르기 필터
+              ...(options.allergies && options.allergies.length > 0
+                ? [{
+                    bool: {
+                      must_not: options.allergies.map(allergy => ({
+                        term: { 'allergies.keyword': allergy }
+                      }))
+                    }
+                  }]
+                : [])
+            ]
+          }
+        },
+        script: {
+          source: `cosineSimilarity(params.query_vector, 'embedding') + 1.0`,
+          params: {
+            query_vector: queryEmbedding
+          }
+        },
+        min_score: minScore
+      }
+    };
+
+    if (!useHybridSearch) {
+      return {
+        size: k,
+        query: vectorQuery,
+        _source: {
+          excludes: ['embedding'] // 응답에서 임베딩 벡터 제외
+        }
+      };
+    }
+
+    // 하이브리드 검색 (벡터 + 텍스트) - 한글 필드 우선
+    const textQuery = {
+      bool: {
+        should: [
+          { match: { nameKo: { query: options.query, boost: 3.0 } } },
+          { match: { name: { query: options.query, boost: 1.5 } } },
+          { match: { descriptionKo: { query: options.query, boost: 2.0 } } },
+          { match: { description: { query: options.query, boost: 1.0 } } },
+          { match: { ingredientsKo: { query: options.query, boost: 1.8 } } },
+          { match: { ingredients: { query: options.query, boost: 1.0 } } },
+          { match: { tagsKo: { query: options.query, boost: 1.5 } } },
+          { match: { tags: { query: options.query, boost: 0.8 } } }
+        ]
+      }
+    };
+
+    return {
+      size: k,
+      query: {
+        bool: {
+          should: [
+            {
+              constant_score: {
+                query: vectorQuery,
+                boost: vectorWeight
+              }
+            },
+            {
+              constant_score: {
+                query: textQuery,
+                boost: textWeight
+              }
+            }
+          ],
+          filter: [
+            ...(options.allergies && options.allergies.length > 0
+              ? [{
+                  bool: {
+                    must_not: options.allergies.map(allergy => ({
+                      term: { 'allergies.keyword': allergy }
+                    }))
+                  }
+                }]
+              : [])
+          ]
+        }
+      },
+      _source: {
+        excludes: ['embedding'] // 응답에서 임베딩 벡터 제외
+      }
+    };
+  }
+
+  /**
+   * 벡터 검색 결과 포맷팅
+   */
+  private formatVectorSearchResults(
+    response: ElasticsearchResponse<ElasticsearchRecipe>,
+    vectorWeight: number,
+    textWeight: number
+  ): VectorSearchResult[] {
+    return response.hits.hits.map(hit => {
+      const recipe = hit._source as ElasticsearchRecipe;
+      
+      return {
+        ...recipe,
+        id: hit._id,
+        _score: hit._score || 0,
+        vectorSimilarity: hit._score ? hit._score * vectorWeight : undefined,
+        textRelevance: hit._score ? hit._score * textWeight : undefined,
+        combinedScore: hit._score || 0,
+        searchMethod: vectorWeight > 0 && textWeight > 0 ? 'hybrid' : 'vector'
+      } as VectorSearchResult;
+    });
   }
 }

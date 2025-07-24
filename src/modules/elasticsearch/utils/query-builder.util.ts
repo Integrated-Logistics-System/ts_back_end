@@ -14,18 +14,20 @@ export class QueryBuilder {
     const must: any[] = [];
     const filter: any[] = [];
 
-    // 텍스트 검색
+    // 텍스트 검색 - 한글 필드 우선
     if (query) {
       must.push({
         multi_match: {
           query,
           fields: [
-            'name^3',
-            'name_ko^3',
-            'description^2',
-            'description_ko^2',
-            'ingredients^1.5',
-            'tags',
+            'nameKo^4',      // 한글 요리명 (최우선)
+            'name^2',        // 영어 요리명
+            'descriptionKo^3', // 한글 설명
+            'description^1.5',  // 영어 설명
+            'ingredientsKo^2.5', // 한글 재료
+            'ingredients^1.2',   // 영어 재료
+            'tagsKo^2',      // 한글 태그
+            'tags^1',        // 영어 태그
           ],
           type: 'best_fields',
           fuzziness: 'AUTO',
@@ -49,10 +51,12 @@ export class QueryBuilder {
       sort: this.buildSortOptions(options),
       highlight: {
         fields: {
+          nameKo: {},
           name: {},
-          name_ko: {},
+          descriptionKo: {},
           description: {},
-          description_ko: {},
+          ingredientsKo: {},
+          ingredients: {},
         },
       },
     };
@@ -68,17 +72,18 @@ export class QueryBuilder {
     const filter: any[] = [];
     const mustNot: any[] = [];
 
-    // 기본 텍스트 검색
+    // 기본 텍스트 검색 - 한글 필드 우선
     if (query) {
       must.push({
         multi_match: {
           query,
           fields: [
-            'name^3',
-            'name_ko^3',
-            'description^2',
-            'description_ko^2',
-            'ingredients^1.5',
+            'nameKo^4',      // 한글 요리명 (최우선)
+            'name^2',        // 영어 요리명
+            'descriptionKo^3', // 한글 설명
+            'description^1.5',  // 영어 설명
+            'ingredientsKo^2.5', // 한글 재료
+            'ingredients^1.2',   // 영어 재료
           ],
           type: 'best_fields',
           fuzziness: 'AUTO',
@@ -86,14 +91,14 @@ export class QueryBuilder {
       });
     }
 
-    // 포함할 재료
+    // 포함할 재료 - 한글 재료 우선
     if (options.ingredients?.length) {
       must.push({
         bool: {
           should: options.ingredients.map(ingredient => ({
             multi_match: {
               query: ingredient,
-              fields: ['ingredients'],
+              fields: ['ingredientsKo^2', 'ingredients'],
               type: 'phrase',
             },
           })),
@@ -102,13 +107,13 @@ export class QueryBuilder {
       });
     }
 
-    // 제외할 재료
+    // 제외할 재료 - 한글/영어 모두 체크
     if (options.excludeIngredients?.length) {
       options.excludeIngredients.forEach(ingredient => {
         mustNot.push({
           multi_match: {
             query: ingredient,
-            fields: ['ingredients'],
+            fields: ['ingredientsKo', 'ingredients'],
             type: 'phrase',
           },
         });
@@ -155,10 +160,11 @@ export class QueryBuilder {
       sort: this.buildAdvancedSortOptions(options),
       highlight: {
         fields: {
+          nameKo: {},
           name: {},
-          name_ko: {},
+          descriptionKo: {},
           description: {},
-          description_ko: {},
+          ingredientsKo: {},
           ingredients: {},
         },
       },
@@ -292,11 +298,11 @@ export class QueryBuilder {
       });
     }
 
-    // 인기도 기반
+    // 인기도 기반 - use available fields
     should.push({
       function_score: {
         field_value_factor: {
-          field: 'averageRating',
+          field: 'safetyScore',
           factor: 0.1,
           modifier: 'log1p',
           missing: 0,
@@ -307,10 +313,10 @@ export class QueryBuilder {
     should.push({
       function_score: {
         field_value_factor: {
-          field: 'viewCount',
+          field: 'nIngredients',
           factor: 0.01,
           modifier: 'log1p',
-          missing: 0,
+          missing: 1,
         },
       },
     });
@@ -333,21 +339,17 @@ export class QueryBuilder {
    * 자동완성 쿼리
    */
   buildSuggestionQuery(query: string, limit: number): object {
+    // Ensure limit is valid and not null
+    const validLimit = Math.max(1, Math.min(limit || 5, 10));
+    
     return {
       index: 'recipes',
       suggest: {
-        recipe_suggest: {
-          prefix: query,
-          completion: {
-            field: 'suggest',
-            size: limit,
-          },
-        },
         name_suggest: {
           text: query,
           term: {
-            field: 'name_ko',
-            size: limit,
+            field: 'nameKo', // Use existing field
+            size: validLimit,
           },
         },
       },
@@ -371,8 +373,8 @@ export class QueryBuilder {
       },
       size: limit,
       sort: [
-        { averageRating: { order: 'desc' } },
-        { viewCount: { order: 'desc' } },
+        { safetyScore: { order: 'desc' } },
+        { nIngredients: { order: 'desc' } },
       ],
     };
   }
@@ -385,7 +387,7 @@ export class QueryBuilder {
       index: 'recipes',
       query: { match_all: {} },
       size: limit,
-      sort: [{ created_at: { order: 'desc' } }],
+      sort: [{ createdAt: { order: 'desc' } }],
     };
   }
 
@@ -398,14 +400,14 @@ export class QueryBuilder {
       query: {
         bool: {
           filter: [
-            { range: { ratingCount: { gte: 5 } } },
+            { range: { safetyScore: { gte: 0.5 } } }, // Use safetyScore instead of ratingCount
           ],
         },
       },
       size: limit,
       sort: [
-        { averageRating: { order: 'desc' } },
-        { ratingCount: { order: 'desc' } },
+        { safetyScore: { order: 'desc' } },
+        { nIngredients: { order: 'asc' } }, // Sort by simplicity (fewer ingredients)
       ],
     };
   }
@@ -442,10 +444,10 @@ export class QueryBuilder {
       });
     }
 
-    // 최소 평점
+    // 최소 평점 - use safetyScore instead
     if (options.minRating) {
       filter.push({
-        range: { averageRating: { gte: options.minRating } },
+        range: { safetyScore: { gte: options.minRating } },
       });
     }
 
@@ -460,7 +462,7 @@ export class QueryBuilder {
   private buildSortOptions(options: SearchOptions): any[] {
     return [
       { _score: { order: 'desc' } },
-      { averageRating: { order: 'desc' } },
+      { createdAt: { order: 'desc' } }, // Use createdAt instead of averageRating
     ];
   }
 
@@ -469,21 +471,23 @@ export class QueryBuilder {
 
     switch (options.sortBy) {
       case 'rating':
-        sortOptions.push({ averageRating: { order: options.sortOrder || 'desc' } });
+        // Use safetyScore as a proxy for rating since averageRating doesn't exist
+        sortOptions.push({ safetyScore: { order: options.sortOrder || 'desc' } });
         break;
       case 'time':
         sortOptions.push({ minutes: { order: options.sortOrder || 'asc' } });
         break;
       case 'popularity':
-        sortOptions.push({ viewCount: { order: options.sortOrder || 'desc' } });
+        // Use nIngredients as a proxy for popularity since viewCount doesn't exist
+        sortOptions.push({ nIngredients: { order: options.sortOrder || 'desc' } });
         break;
       default:
         sortOptions.push({ _score: { order: 'desc' } });
     }
 
-    // 기본 정렬 추가
+    // 기본 정렬 추가 - use createdAt instead of averageRating
     if (options.sortBy !== 'rating') {
-      sortOptions.push({ averageRating: { order: 'desc' } });
+      sortOptions.push({ createdAt: { order: 'desc' } });
     }
 
     return sortOptions;

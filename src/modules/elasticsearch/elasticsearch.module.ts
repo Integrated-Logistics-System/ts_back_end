@@ -1,6 +1,8 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { Client } from '@elastic/elasticsearch';
+import { EmbeddingModule } from '../embedding/embedding.module';
+import { CacheModule } from '../cache/cache.module';
 
 // Main service
 import { ElasticsearchService } from './elasticsearch.service';
@@ -15,8 +17,15 @@ import { QueryBuilder } from './utils/query-builder.util';
 import { ResponseFormatter } from './utils/response-formatter.util';
 import { RecipeValidator } from './utils/recipe-validator.util';
 
+// Controllers
+import { VectorSearchController } from './controllers/vector-search.controller';
+
+// Services
+import { VectorSearchCacheService } from './services/vector-search-cache.service';
+
 @Module({
-  imports: [ConfigModule],
+  imports: [ConfigModule, EmbeddingModule, CacheModule],
+  controllers: [VectorSearchController],
   providers: [
     // Elasticsearch Client Provider
     {
@@ -45,6 +54,9 @@ import { RecipeValidator } from './utils/recipe-validator.util';
     QueryBuilder,
     ResponseFormatter,
     RecipeValidator,
+    
+    // Vector Search services
+    VectorSearchCacheService,
   ],
   exports: [
     ElasticsearchService,

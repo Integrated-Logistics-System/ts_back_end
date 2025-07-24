@@ -12,6 +12,13 @@ import {
   BulkOperationResult,
   RecipeStats,
   HealthStatus,
+  // Vector Search 타입들 추가
+  VectorSearchOptions,
+  VectorSearchResult,
+  VectorSearchResponse,
+  EmbeddingIndexingOptions,
+  EmbeddingIndexingProgress,
+  EmbeddingIndexingResult,
 } from './types/elasticsearch.types';
 
 // Re-export types for external use
@@ -26,6 +33,13 @@ export {
   RecipeStats,
   HealthStatus,
   AllergenInfo,
+  // Vector Search 타입들 추가
+  VectorSearchOptions,
+  VectorSearchResult,
+  VectorSearchResponse,
+  EmbeddingIndexingOptions,
+  EmbeddingIndexingProgress,
+  EmbeddingIndexingResult,
 } from './types/elasticsearch.types';
 
 // Modular services
@@ -261,6 +275,16 @@ export class ElasticsearchService implements OnModuleInit {
     return this.allergenProcessor.suggestAllergenFreeAlternatives(ingredients, userAllergies);
   }
 
+  // ==================== Vector Search Operations ====================
+
+  /**
+   * 벡터 검색 (의미적 유사도 기반)
+   */
+  async vectorSearch(options: VectorSearchOptions): Promise<VectorSearchResponse> {
+    this.ensureConnection();
+    return this.recipeSearchService.vectorSearch(options);
+  }
+
   // ==================== Statistics & Health ====================
 
   /**
@@ -337,6 +361,15 @@ export class ElasticsearchService implements OnModuleInit {
         },
       };
     }
+  }
+
+  // ==================== Client Access for Migration ====================
+  
+  /**
+   * Elasticsearch 클라이언트 직접 접근 (마이그레이션 용도)
+   */
+  getClient(): Client {
+    return this.client;
   }
 
   // ==================== Private Helper Methods ====================

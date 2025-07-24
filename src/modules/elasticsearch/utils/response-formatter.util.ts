@@ -191,6 +191,42 @@ export class ResponseFormatter {
   private formatSingleHit(hit: ElasticsearchHit<ElasticsearchRecipe>): ElasticsearchRecipe {
     const recipe = { ...hit._source };
     
+    // 한글 필드를 우선적으로 사용하도록 변경
+    if (recipe.nameKo && recipe.nameKo.trim()) {
+      recipe.name = recipe.nameKo;
+    }
+    if (recipe.descriptionKo && recipe.descriptionKo.trim()) {
+      recipe.description = recipe.descriptionKo;
+    }
+    if (recipe.ingredientsKo && Array.isArray(recipe.ingredientsKo) && recipe.ingredientsKo.length > 0) {
+      recipe.ingredients = recipe.ingredientsKo;
+    }
+    if (recipe.stepsKo && (
+      (typeof recipe.stepsKo === 'string' && (recipe.stepsKo as string).trim()) ||
+      (Array.isArray(recipe.stepsKo) && recipe.stepsKo.length > 0)
+    )) {
+      recipe.steps = recipe.stepsKo;
+    }
+    if (recipe.tagsKo && Array.isArray(recipe.tagsKo) && recipe.tagsKo.length > 0) {
+      recipe.tags = recipe.tagsKo;
+    }
+
+    // 알레르기 정보 한글화
+    if (recipe.allergenInfo && recipe.allergenInfo.contains_allergens) {
+      recipe.allergenInfo.contains_allergens = this.translateAllergensToKorean(recipe.allergenInfo.contains_allergens);
+    }
+    if (recipe.allergenInfo && recipe.allergenInfo.high_risk_ingredients) {
+      recipe.allergenInfo.high_risk_ingredients = this.translateIngredientsToKorean(recipe.allergenInfo.high_risk_ingredients);
+    }
+    if (recipe.allergenInfo && recipe.allergenInfo.safe_for) {
+      recipe.allergenInfo.safe_for = this.translateAllergensToKorean(recipe.allergenInfo.safe_for);
+    }
+
+    // 난이도 한글화
+    if (recipe.difficulty) {
+      recipe.difficulty = this.translateDifficultyToKorean(recipe.difficulty);
+    }
+    
     // Elasticsearch 메타데이터 추가
     if (hit._score) {
       (recipe as any)._score = hit._score;
@@ -213,7 +249,7 @@ export class ResponseFormatter {
     recipe.viewCount = recipe.viewCount || 0;
     recipe.likeCount = recipe.likeCount || 0;
     recipe.bookmarkCount = recipe.bookmarkCount || 0;
-    recipe.averageRating = recipe.averageRating || 0;
+    recipe.averageRating = recipe.safetyScore || 0; // Use safetyScore as proxy
     recipe.ratingCount = recipe.ratingCount || 0;
 
     // 안전성 점수 계산 (클라이언트에서 사용)
@@ -223,6 +259,96 @@ export class ResponseFormatter {
     }
 
     return recipe;
+  }
+
+  /**
+   * 알레르기 정보를 한글로 번역
+   */
+  private translateAllergensToKorean(allergens: string[]): string[] {
+    const allergenMap: Record<string, string> = {
+      'milk': '우유',
+      'eggs': '달걀',
+      'fish': '생선',
+      'crustacean shellfish': '갑각류',
+      'tree nuts': '견과류',
+      'peanuts': '땅콩',
+      'wheat': '밀',
+      'soybeans': '대두',
+      'sesame': '참깨',
+      'sulfites': '아황산류',
+      'shellfish': '조개류',
+      'gluten': '글루텐',
+      'nuts': '견과류',
+      'soy': '대두',
+      'dairy': '유제품'
+    };
+
+    return allergens.map(allergen => 
+      allergenMap[allergen.toLowerCase()] || allergen
+    );
+  }
+
+  /**
+   * 재료명을 한글로 번역 (기본적인 재료들)
+   */
+  private translateIngredientsToKorean(ingredients: string[]): string[] {
+    const ingredientMap: Record<string, string> = {
+      'flour': '밀가루',
+      'sugar': '설탕',
+      'salt': '소금',
+      'pepper': '후추',
+      'oil': '기름',
+      'butter': '버터',
+      'milk': '우유',
+      'eggs': '달걀',
+      'onion': '양파',
+      'garlic': '마늘',
+      'ginger': '생강',
+      'soy sauce': '간장',
+      'sesame oil': '참기름',
+      'rice': '쌀',
+      'noodles': '면',
+      'chicken': '닭고기',
+      'beef': '소고기',
+      'pork': '돼지고기',
+      'fish': '생선',
+      'shrimp': '새우',
+      'tofu': '두부',
+      'kimchi': '김치',
+      'cucumber': '오이',
+      'carrot': '당근',
+      'potato': '감자',
+      'tomato': '토마토',
+      'cabbage': '양배추',
+      'spinach': '시금치',
+      'mushroom': '버섯',
+      'green onion': '대파',
+      'chili': '고추',
+      'bean sprouts': '콩나물'
+    };
+
+    return ingredients.map(ingredient => 
+      ingredientMap[ingredient.toLowerCase()] || ingredient
+    );
+  }
+
+  /**
+   * 난이도를 한글로 번역
+   */
+  private translateDifficultyToKorean(difficulty: string): string {
+    const difficultyMap: Record<string, string> = {
+      'easy': '쉬움',
+      'medium': '보통',
+      'hard': '어려움',
+      'beginner': '초급',
+      'intermediate': '중급',
+      'advanced': '고급',
+      'simple': '간단',
+      'moderate': '보통',
+      'complex': '복잡'
+    };
+
+    return difficultyMap[difficulty.toLowerCase()] || difficulty;
   }
 
   private formatDifficultyDistribution(difficultyAgg: any[]): Record<string, number> {
