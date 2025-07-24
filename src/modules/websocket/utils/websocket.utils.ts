@@ -11,6 +11,7 @@ import {
   WEBSOCKET_CONFIG,
   RESPONSE_TYPES,
   SYSTEM_INFO,
+  WEBSOCKET_EVENTS,
 } from '../constants/websocket.constants';
 
 @Injectable()
@@ -231,10 +232,10 @@ export class WebSocketUtils {
    */
   isValidEventName(eventName: string): boolean {
     const validEvents = Object.values({
-      ...Object.values(require('../constants/websocket.constants').WEBSOCKET_EVENTS),
+      ...Object.values(WEBSOCKET_EVENTS),
     });
 
-    return validEvents.includes(eventName);
+    return validEvents.includes(eventName as any);
   }
 
   /**

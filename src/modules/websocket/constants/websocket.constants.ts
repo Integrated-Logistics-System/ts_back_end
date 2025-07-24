@@ -15,12 +15,28 @@ export const WEBSOCKET_EVENTS = {
   CLEAR_HISTORY: 'clear_history',
   CHAT_RESPONSE: 'chat_response',
   
-  // LangGraph events
+  // LangGraph events (기존 복잡한 버전)
   LANGGRAPH_RECIPE_V2: 'langgraph_recipe_v2',
   LANGGRAPH_RAG_V2: 'langgraph_rag_v2',
   LANGGRAPH_BENCHMARK: 'langgraph_benchmark',
   LANGGRAPH_RESPONSE: 'langgraph_response',
   LANGGRAPH_ERROR: 'langgraph_error',
+  
+  // Simple LangGraph events (새로운 간단한 버전)
+  SIMPLE_LANGGRAPH_QUERY: 'simple_langgraph_query',
+  SIMPLE_LANGGRAPH_ANONYMOUS: 'simple_langgraph_anonymous',
+  SIMPLE_LANGGRAPH_HEALTH: 'simple_langgraph_health',
+  SIMPLE_LANGGRAPH_CAPABILITIES: 'simple_langgraph_capabilities',
+  SIMPLE_LANGGRAPH_RESPONSE: 'simple_langgraph_response',
+  
+  // LangChain Agent events (최신 Agent 기반 버전)
+  AGENT_QUERY: 'agent_query',
+  AGENT_ANONYMOUS: 'agent_anonymous',
+  AGENT_STATUS: 'agent_status',
+  AGENT_HEALTH: 'agent_health',
+  AGENT_RESPONSE: 'agent_response',
+  AGENT_ERROR: 'agent_error',
+  SIMPLE_LANGGRAPH_ERROR: 'simple_langgraph_error',
   
   // Status events
   GET_STATUS: 'get_status',
@@ -42,17 +58,20 @@ export const WEBSOCKET_EVENTS = {
 
 // System Information
 export const SYSTEM_INFO = {
-  VERSION: 'LangGraph v0.3.8',
-  API_VERSION: '2.0',
-  WEBSOCKET_VERSION: '1.0',
+  VERSION: 'Simple LangGraph v1.0',
+  API_VERSION: '3.0',
+  WEBSOCKET_VERSION: '2.0',
   SUPPORTED_FEATURES: [
     'chat',
-    'langgraph_recipes',
-    'langgraph_rag',
+    'simple_langgraph',
+    'langchain_agent',
+    'vector_search',
+    'user_personalization',
     'streaming',
-    'benchmarking',
+    'anonymous_queries',
     'authentication',
     'rate_limiting',
+    'health_checks',
   ],
 } as const;
 
@@ -110,6 +129,12 @@ export const ERROR_CODES = {
   AI_SERVICE_ERROR: 'AI_SERVICE_ERROR',
   DATABASE_ERROR: 'DATABASE_ERROR',
   
+  // Agent-specific errors
+  AGENT_PROCESSING_FAILED: 'AGENT_PROCESSING_FAILED',
+  AGENT_STATUS_FAILED: 'AGENT_STATUS_FAILED',
+  AGENT_HEALTH_FAILED: 'AGENT_HEALTH_FAILED',
+  AGENT_INITIALIZATION_FAILED: 'AGENT_INITIALIZATION_FAILED',
+  
   // Processing errors
   PROCESSING_TIMEOUT: 'PROCESSING_TIMEOUT',
   PROCESSING_ERROR: 'PROCESSING_ERROR',
@@ -138,6 +163,11 @@ export const ERROR_MESSAGES = {
   [ERROR_CODES.LANGGRAPH_ERROR]: 'LangGraph 처리 중 오류가 발생했습니다.',
   [ERROR_CODES.AI_SERVICE_ERROR]: 'AI 서비스 오류가 발생했습니다.',
   [ERROR_CODES.DATABASE_ERROR]: '데이터베이스 오류가 발생했습니다.',
+  
+  [ERROR_CODES.AGENT_PROCESSING_FAILED]: 'Agent 처리 중 오류가 발생했습니다.',
+  [ERROR_CODES.AGENT_STATUS_FAILED]: 'Agent 상태 조회에 실패했습니다.',
+  [ERROR_CODES.AGENT_HEALTH_FAILED]: 'Agent 건강 상태 확인에 실패했습니다.',
+  [ERROR_CODES.AGENT_INITIALIZATION_FAILED]: 'Agent 초기화에 실패했습니다.',
   
   [ERROR_CODES.PROCESSING_TIMEOUT]: '처리 시간이 초과되었습니다.',
   [ERROR_CODES.PROCESSING_ERROR]: '처리 중 오류가 발생했습니다.',

@@ -3,13 +3,16 @@
 import { Module } from '@nestjs/common';
 import { AuthModule } from '../auth/auth.module';
 import { UserModule } from '../user/user.module';
-import { LanggraphModule } from '@/modules/langgraph/langgraph.module';
+import { LanggraphModule } from '../langgraph/langgraph.module';
 import { ConversationModule } from '../conversation/conversation.module';
 import { ChatModule } from '../chat/chat.module';
+import { RAGModule } from '../rag/rag.module';
 
 // Main services
 import { ChatGateway } from './websocket.gateway';
+import { EnhancedWebSocketGateway } from './enhanced-websocket.gateway';
 import { PersonalChatService } from './personal-chat.service';
+import { StreamingOptimizationService } from './streaming-optimization.service';
 
 // Refactored modular services - PersonalChat
 import { ConversationAnalyzer } from './processors/conversation-analyzer.service';
@@ -39,13 +42,16 @@ import { WebSocketUtils } from './utils/websocket.utils';
     LanggraphModule,   // LangGraph AI 워크플로우 서비스
     ConversationModule, // ChatGPT 스타일 대화형 시스템
     ChatModule,        // 채팅 히스토리 서비스
+    RAGModule,         // RAG 서비스 (AdvancedRAGService, KoreanRAGService)
     // AiModule은 Global로 등록되어 있으므로 import 불필요
     // CacheModule은 Global이므로 import 불필요
   ],
   providers: [
     // Main services
-    ChatGateway,
+    ChatGateway, // 기존 복잡한 게이트웨이 (호환성 유지)
+    EnhancedWebSocketGateway, // 스트리밍 최적화 게이트웨이
     PersonalChatService,
+    StreamingOptimizationService, // 스트리밍 최적화 서비스
     
     // Modular processors - PersonalChat
     ConversationAnalyzer,
@@ -60,7 +66,7 @@ import { WebSocketUtils } from './utils/websocket.utils';
     AuthenticationManager,
     
     // Handlers - WebSocket
-    LangGraphHandler,
+    LangGraphHandler, // 기존 복잡한 핸들러 (호환성 유지)
     ChatHandler,
     StatusHandler,
     
@@ -70,6 +76,7 @@ import { WebSocketUtils } from './utils/websocket.utils';
   ],
   exports: [
     PersonalChatService,
+    StreamingOptimizationService, // 다른 모듈에서 사용 가능하도록 export
     // Export modular services for use in other modules if needed
     ConversationAnalyzer,
     EnhancedIntentAnalyzer,

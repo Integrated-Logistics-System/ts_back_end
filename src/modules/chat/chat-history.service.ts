@@ -1,5 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { RedisService } from '../redis/redis.service';
+import { CacheService } from '../cache/cache.service';
 
 export interface ChatMessage {
   id: string;
@@ -38,7 +38,7 @@ export class ChatHistoryService {
   private readonly MAX_HISTORY_LENGTH = 50;
   private readonly CONTEXT_TTL = 7 * 24 * 60 * 60; // 7일
 
-  constructor(private readonly redisService: RedisService) {}
+  constructor(private readonly cacheService: CacheService) {}
 
   // ================== 대화 저장 ==================
 
@@ -62,14 +62,17 @@ export class ChatHistoryService {
 
       const key = `${this.CHAT_HISTORY_KEY}${userId}`;
       
-      // Redis에 대화 저장 (리스트로 관리)
-      await this.redisService.lpush(key, JSON.stringify(chatMessage));
+      // 캐시에 대화 저장 (배열로 관리)
+      const existingHistory = await this.cacheService.get<ChatMessage[]>(key) || [];
+      existingHistory.unshift(chatMessage); // 최신 메시지를 앞에 추가
       
       // 최대 길이 유지
-      await this.redisService.ltrim(key, 0, this.MAX_HISTORY_LENGTH - 1);
+      if (existingHistory.length > this.MAX_HISTORY_LENGTH) {
+        existingHistory.splice(this.MAX_HISTORY_LENGTH);
+      }
       
-      // TTL 설정
-      await this.redisService.expire(key, this.CONTEXT_TTL);
+      // TTL과 함께 저장
+      await this.cacheService.set(key, existingHistory, this.CONTEXT_TTL);
 
       this.logger.log(`💬 Chat message saved for user ${userId}: ${type}`);
       
@@ -86,17 +89,11 @@ export class ChatHistoryService {
   async getChatHistory(userId: string, limit: number = 10): Promise<ChatMessage[]> {
     try {
       const key = `${this.CHAT_HISTORY_KEY}${userId}`;
-      const messages = await this.redisService.lrange(key, 0, limit - 1);
+      const messages = await this.cacheService.get<ChatMessage[]>(key) || [];
       
       return messages
-        .map(msg => {
-          try {
-            return JSON.parse(msg) as ChatMessage;
-          } catch {
-            return null;
-          }
-        })
-        .filter((msg): msg is ChatMessage => msg !== null)
+        .slice(0, limit)
+        .filter(msg => msg !== null)
         .sort((a, b) => b.timestamp - a.timestamp);
     } catch (error) {
       this.logger.error('Failed to get chat history:', error);
@@ -148,9 +145,9 @@ export class ChatHistoryService {
         ...existingContext.recentMessages.slice(0, 9)
       ];
 
-      await this.redisService.set(
+      await this.cacheService.set(
         contextKey,
-        JSON.stringify(existingContext),
+        existingContext,
         this.CONTEXT_TTL
       );
 
@@ -162,10 +159,10 @@ export class ChatHistoryService {
   async getUserContext(userId: string): Promise<ConversationContext> {
     try {
       const contextKey = `${this.USER_CONTEXT_KEY}${userId}`;
-      const contextData = await this.redisService.get(contextKey);
+      const contextData = await this.cacheService.get<ConversationContext>(contextKey);
       
       if (contextData) {
-        return JSON.parse(contextData) as ConversationContext;
+        return contextData;
       }
       
       // 기본 컨텍스트 반환
@@ -284,8 +281,8 @@ export class ChatHistoryService {
 
   async clearChatHistory(userId: string): Promise<void> {
     try {
-      await this.redisService.del(`${this.CHAT_HISTORY_KEY}${userId}`);
-      await this.redisService.del(`${this.USER_CONTEXT_KEY}${userId}`);
+      await this.cacheService.delete(`${this.CHAT_HISTORY_KEY}${userId}`);
+      await this.cacheService.delete(`${this.USER_CONTEXT_KEY}${userId}`);
       this.logger.log(`🗑️ Chat history cleared for user ${userId}`);
     } catch (error) {
       this.logger.error('Failed to clear chat history:', error);

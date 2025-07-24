@@ -16,9 +16,11 @@ import { UserService } from '../user/user.service';
 import { AuthService } from '../auth/auth.service';
 import { PersonalChatService } from './personal-chat.service';
 import { LangGraphService } from '../langgraph/langgraph.service';
+import { SimpleLangGraphHandler } from './handlers/simple-langgraph.handler';
 import { ConversationManagerService } from '../conversation/conversation-manager.service';
-import { PersonalizedResponseService } from '../conversation/personalized-response.service';
 import { ChatHistoryService } from '../chat/chat-history.service';
+import { AiService } from '../ai/ai.service';
+// PersonalizationHandler removed
 import { UserSessionData } from '../auth/auth.service';
 
 interface AuthenticatedSocket extends Socket {
@@ -51,15 +53,17 @@ export class ChatGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
       private readonly userService: UserService,
       private readonly authService: AuthService,
       private readonly personalChatService: PersonalChatService,
-      private readonly langgraphService: LangGraphService,
+      private readonly langGraphService: LangGraphService,
+      private readonly simpleLangGraphHandler: SimpleLangGraphHandler,
       private readonly conversationManager: ConversationManagerService,
-      private readonly personalizedResponse: PersonalizedResponseService,
       private readonly chatHistoryService: ChatHistoryService,
+      private readonly aiService: AiService,
+      // personalizationHandler removed
   ) {}
 
   afterInit(_server: Server) {
     const websocketPort = process.env.WEBSOCKET_PORT || 8083;
-    this.logger.log(`🚀 WebSocket Gateway initialized with LangGraph v0.3.8 on port ${websocketPort}`);
+    this.logger.log(`🚀 WebSocket Gateway initialized with Simple LangGraph v1.0 on port ${websocketPort}`);
   }
 
   async handleConnection(client: AuthenticatedSocket) {
@@ -76,8 +80,8 @@ export class ChatGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
           authenticated: false,
           message: 'Connected without authentication',
           clientId: client.id,
-          version: 'LangGraph v0.3.8',
-          features: ['ping', 'chat']
+          version: 'Simple LangGraph v1.0',
+          features: ['ping', 'chat', 'simple_langgraph', 'langchain_agent', 'anonymous_queries']
         });
         return;
       }
@@ -180,11 +184,11 @@ export class ChatGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
 
       let fullResponse = '';
 
-      // 최신 API로 스트리밍 실행
-      for await (const chunk of this.langgraphService.streamRecipeWorkflowForWebSocket(
-          data.query,
-          userAllergies,
-          userId
+      // 레거시 호환 메서드 사용
+      for await (const chunk of this.langGraphService.streamRecipeWorkflowForWebSocket(
+        data.query,
+        userAllergies,
+        userId
       )) {
         client.emit('langgraph_chunk_v2', chunk);
 
@@ -261,7 +265,7 @@ export class ChatGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
         preferences: userPreferences,
       };
 
-      for await (const chunk of this.langgraphService.streamRAGForWebSocket(request, userId)) {
+      for await (const chunk of this.langGraphService.streamRAGForWebSocket(request, userId)) {
         client.emit('langgraph_rag_chunk_v2', chunk);
 
         if (chunk.type === 'error' || chunk.type === 'complete') {
@@ -309,7 +313,7 @@ export class ChatGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
         for (const query of queries) {
           const startTime = Date.now();
 
-          const result = await this.langgraphService.processRecipeRequest(query, allergies);
+          const result = await this.langGraphService.processRecipeRequest(query, allergies);
 
           const endTime = Date.now();
           const totalTime = endTime - startTime;
@@ -359,6 +363,48 @@ export class ChatGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
       });
     }
   }
+
+  // ==================== 🤖 LangChain Agent 이벤트 (최신 Agent 기반) ====================
+
+  // /**
+  //  * LangChain Agent 쿼리 처리 (인증된 사용자)
+  //  */
+  // @SubscribeMessage('agent_query')
+  // async handleAgentQuery(
+  //   @MessageBody() data: { query: string; sessionId?: string },
+  //   @ConnectedSocket() client: AuthenticatedSocket,
+  // ) {
+  //   // LangChain Agent handler removed - use simple_langgraph_query instead
+  //   client.emit('agent_error', { error: 'LangChain Agent deprecated. Use simple_langgraph_query event.' });
+  // }
+
+  // /**
+  //  * LangChain Agent 익명 쿼리 처리
+  //  */
+  // @SubscribeMessage('agent_anonymous')
+  // async handleAgentAnonymous(
+  //   @MessageBody() data: { query: string; sessionId?: string },
+  //   @ConnectedSocket() client: AuthenticatedSocket,
+  // ) {
+  //   // LangChain Agent handler removed - use simple_langgraph_query instead
+  //   client.emit('agent_error', { error: 'LangChain Agent deprecated. Use simple_langgraph_query event.' });
+  // }
+
+  // /**
+  //  * LangChain Agent 상태 조회
+  //  */
+  // @SubscribeMessage('agent_status')
+  // async handleAgentStatus(@ConnectedSocket() client: AuthenticatedSocket) {
+  //   client.emit('agent_status', { status: 'deprecated', message: 'Use simple_langgraph_query instead' });
+  // }
+
+  // /**
+  //  * LangChain Agent 건강 상태 확인
+  //  */
+  // @SubscribeMessage('agent_health')
+  // async handleAgentHealth(@ConnectedSocket() client: AuthenticatedSocket) {
+  //   client.emit('agent_health', { healthy: false, message: 'LangChain Agent deprecated' });
+  // }
 
   // ==================== 기존 호환성 유지 ====================
 
@@ -527,7 +573,7 @@ export class ChatGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
     try {
       const [sessionStatus, langgraphStatus] = await Promise.all([
         this.authService.getSessionStatus(client.user!.id),
-        this.langgraphService.getServiceStatus()
+        this.langGraphService.getServiceStatus()
       ]);
 
       client.emit('status-response', {
@@ -663,7 +709,8 @@ export class ChatGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
       features: [
         'join-chat', 'send-message', 'clear-history', 'get-status',
         'langgraph_recipe', 'langgraph_recipe_v2', 'langgraph_rag_v2',
-        'langgraph_benchmark'
+        'langgraph_benchmark', 'agent_query', 'agent_anonymous', 
+        'agent_status', 'agent_health'
       ]
     });
   }
@@ -744,7 +791,7 @@ export class ChatGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
    */
   @SubscribeMessage('conversation_message')
   async handleConversationMessage(
-    @MessageBody() data: { message: string; sessionId?: string; usePersonalization?: boolean },
+    @MessageBody() data: { message: string; sessionId?: string },
     @ConnectedSocket() client: AuthenticatedSocket,
   ) {
     if (!client.user) {
@@ -771,51 +818,59 @@ export class ChatGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
       conversationState.userIntent = this.classifyUserIntent(data.message);
       conversationState.currentStage = this.determineConversationStage(conversationState, data.message);
 
-      // 3. 개인화된 응답 생성
-      const personalizedResponse = await this.personalizedResponse.generatePersonalizedResponse(
-        userId,
-        data.message,
-        conversationState
-      );
+      // 3. 간단한 AI 응답 생성 (개인화 제거)
+      const context = this.conversationManager.buildConversationContext(conversationState);
+      const prompt = `${context}\n\n사용자 메시지: ${data.message}\n\n도움이 되는 응답을 생성해주세요.`;
+      
+      const aiResponse = await this.aiService.generateResponse(prompt, {
+        temperature: 0.7,
+        maxTokens: 1000
+      });
+
+      const simpleResponse = {
+        content: aiResponse,
+        tone: 'helpful' as const,
+        actionRequired: false,
+        suggestedFollowups: [] as string[],
+        recipeData: [] as any[]
+      };
 
       // 4. 대화 상태 업데이트
       await this.conversationManager.updateConversationState(
         conversationState.sessionId,
         data.message,
-        personalizedResponse.content,
-        personalizedResponse.recipeData as any[]
+        simpleResponse.content,
+        simpleResponse.recipeData as any[]
       );
 
       // 5. 대화 히스토리에 저장 (RAG용)
-      if (data.usePersonalization !== false) {
-        await this.chatHistoryService.saveChatMessage(
-          userId,
-          data.message,
-          personalizedResponse.content,
-          'recipe_query',
-          {
-            processingTime: Date.now() - startTime,
-            hasRecipe: !!personalizedResponse.recipeData,
-          }
-        );
-      }
+      await this.chatHistoryService.saveChatMessage(
+        userId,
+        data.message,
+        simpleResponse.content,
+        'recipe_query',
+        {
+          processingTime: Date.now() - startTime,
+          hasRecipe: !!simpleResponse.recipeData,
+        }
+      );
 
       // 6. 클라이언트에 응답 전송
       client.emit('conversation_response', {
-        content: personalizedResponse.content,
+        content: simpleResponse.content,
         sessionId: conversationState.sessionId,
         metadata: {
           intent: conversationState.userIntent,
           stage: conversationState.currentStage,
-          tone: personalizedResponse.tone,
-          actionRequired: personalizedResponse.actionRequired,
+          tone: simpleResponse.tone,
+          actionRequired: simpleResponse.actionRequired,
           processingTime: Date.now() - startTime,
           userId: userId,
           model: 'Conversational AI Assistant v2.0',
-          personalizationUsed: data.usePersonalization !== false
+          personalizationUsed: false
         },
-        suggestedFollowups: personalizedResponse.suggestedFollowups,
-        recipeData: personalizedResponse.recipeData,
+        suggestedFollowups: simpleResponse.suggestedFollowups,
+        recipeData: simpleResponse.recipeData,
         timestamp: new Date().toISOString(),
       });
 
@@ -836,7 +891,7 @@ export class ChatGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
    */
   @SubscribeMessage('conversation_stream')
   async handleConversationStream(
-    @MessageBody() data: { message: string; sessionId?: string; usePersonalization?: boolean },
+    @MessageBody() data: { message: string; sessionId?: string },
     @ConnectedSocket() client: AuthenticatedSocket,
   ) {
     if (!client.user) {
@@ -865,15 +920,25 @@ export class ChatGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
         timestamp: new Date().toISOString()
       });
 
-      // 3. 개인화된 응답 생성
-      const personalizedResponse = await this.personalizedResponse.generatePersonalizedResponse(
-        userId,
-        data.message,
-        conversationState
-      );
+      // 3. 간단한 AI 응답 생성 (개인화 제거)
+      const context = this.conversationManager.buildConversationContext(conversationState);
+      const prompt = `${context}\n\n사용자 메시지: ${data.message}\n\n도움이 되는 응답을 생성해주세요.`;
+      
+      const aiResponse = await this.aiService.generateResponse(prompt, {
+        temperature: 0.7,
+        maxTokens: 1000
+      });
+
+      const simpleResponse = {
+        content: aiResponse,
+        tone: 'helpful' as const,
+        actionRequired: false,
+        suggestedFollowups: [] as string[],
+        recipeData: [] as any[]
+      };
 
       // 4. 응답을 청크로 나누어 스트리밍
-      const chunks = this.splitIntoChunks(personalizedResponse.content);
+      const chunks = this.splitIntoChunks(simpleResponse.content);
       
       for (let i = 0; i < chunks.length; i++) {
         const chunk = chunks[i];
@@ -886,8 +951,8 @@ export class ChatGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
           isComplete: isLast,
           metadata: isLast ? {
             intent: conversationState.userIntent,
-            tone: personalizedResponse.tone,
-            suggestedFollowups: personalizedResponse.suggestedFollowups
+            tone: simpleResponse.tone,
+            suggestedFollowups: simpleResponse.suggestedFollowups
           } : undefined,
           timestamp: new Date().toISOString()
         });
@@ -900,14 +965,14 @@ export class ChatGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
       await this.conversationManager.updateConversationState(
         conversationState.sessionId,
         data.message,
-        personalizedResponse.content,
-        personalizedResponse.recipeData as any[]
+        simpleResponse.content,
+        simpleResponse.recipeData as any[]
       );
 
       await this.chatHistoryService.saveChatMessage(
         userId,
         data.message,
-        personalizedResponse.content,
+        simpleResponse.content,
         'recipe_query'
       );
 
@@ -1021,5 +1086,182 @@ export class ChatGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
     }
 
     return chunks.filter(chunk => chunk.trim());
+  }
+
+  // ==================== 🎯 개인화 추천 시스템 WebSocket 이벤트 ====================
+
+  // Personalized recommendation method removed
+
+  // Personalization feedback method removed
+
+  // Cancel personalization method removed
+
+  // ==================== 🎯 체험용 셰프 계정 실시간 상태 업데이트 ====================
+
+  /**
+   * 체험용 셰프 계정 상태 조회
+   */
+  @SubscribeMessage('trial_chef_status')
+  async handleTrialChefStatus(@ConnectedSocket() client: AuthenticatedSocket) {
+    try {
+      const availableCount = await this.authService.getAvailableTrialChefCount();
+      
+      client.emit('trial_chef_status_response', {
+        success: true,
+        availableCount,
+        maxCount: 21,
+        message: `${availableCount}개의 체험용 셰프 계정을 사용할 수 있습니다`,
+        isAvailable: availableCount > 0,
+        timestamp: Date.now()
+      });
+
+      this.logger.log(`📊 체험용 셰프 상태 조회: ${availableCount}/21 사용 가능`);
+    } catch (error) {
+      client.emit('trial_chef_status_response', {
+        success: false,
+        availableCount: 0,
+        maxCount: 21,
+        message: '체험용 셰프 계정 상태 조회에 실패했습니다',
+        isAvailable: false,
+        error: error instanceof Error ? error.message : 'Unknown error',
+        timestamp: Date.now()
+      });
+    }
+  }
+
+  /**
+   * 체험용 셰프 실시간 로그인
+   */
+  @SubscribeMessage('trial_chef_login')
+  async handleTrialChefLogin(@ConnectedSocket() client: AuthenticatedSocket) {
+    this.logger.log(`🎯 체험용 셰프 로그인 시도: ${client.id}`);
+
+    try {
+      const result = await this.authService.loginAsTrialChef();
+      
+      if (result.success && result.user && result.token) {
+        // WebSocket 연결에 체험용 사용자 정보 설정
+        client.user = {
+          id: result.user.id,
+          email: `${result.user.username}@trial.local`,
+          name: result.user.displayName
+        };
+
+        this.connectedClients.set(client.id, client);
+        
+        // 방 참가
+        const roomId = `user:${result.user.id}`;
+        await client.join(roomId);
+
+        this.logger.log(`✅ 체험용 셰프 WebSocket 연결 완료: ${result.user.username}`);
+        
+        // 모든 클라이언트에 체험용 계정 상태 업데이트 브로드캐스트
+        void this.broadcastTrialChefStatusUpdate();
+
+        client.emit('trial_chef_login_response', {
+          success: true,
+          message: '체험용 셰프 로그인 성공',
+          token: result.token,
+          user: result.user,
+          timestamp: Date.now()
+        });
+      } else {
+        client.emit('trial_chef_login_response', {
+          success: false,
+          message: result.message,
+          timestamp: Date.now()
+        });
+      }
+    } catch (error) {
+      this.logger.error('체험용 셰프 WebSocket 로그인 실패:', error);
+      
+      client.emit('trial_chef_login_response', {
+        success: false,
+        message: '체험용 셰프 로그인 처리 중 오류가 발생했습니다',
+        error: error instanceof Error ? error.message : 'Unknown error',
+        timestamp: Date.now()
+      });
+    }
+  }
+
+  /**
+   * 체험용 셰프 실시간 로그아웃
+   */
+  @SubscribeMessage('trial_chef_logout')
+  async handleTrialChefLogout(@ConnectedSocket() client: AuthenticatedSocket) {
+    if (!client.user) {
+      client.emit('trial_chef_logout_response', {
+        success: false,
+        message: '로그인된 사용자가 없습니다',
+        timestamp: Date.now()
+      });
+      return;
+    }
+
+    const userId = client.user.id;
+    this.logger.log(`🚪 체험용 셰프 WebSocket 로그아웃: ${userId}`);
+
+    try {
+      // 체험용 계정인지 확인
+      if (userId.startsWith('trial_')) {
+        const result = await this.authService.logoutTrialChef(userId);
+        
+        // WebSocket 연결 정리
+        client.user = undefined;
+        this.connectedClients.delete(client.id);
+        
+        // 모든 클라이언트에 체험용 계정 상태 업데이트 브로드캐스트
+        void this.broadcastTrialChefStatusUpdate();
+
+        client.emit('trial_chef_logout_response', {
+          success: result.success,
+          message: result.message,
+          timestamp: Date.now()
+        });
+        
+        this.logger.log(`✅ 체험용 셰프 WebSocket 로그아웃 완료: ${userId}`);
+      } else {
+        // 일반 사용자 로그아웃
+        await this.authService.logout(userId);
+        client.user = undefined;
+        this.connectedClients.delete(client.id);
+        
+        client.emit('trial_chef_logout_response', {
+          success: true,
+          message: '로그아웃 성공',
+          timestamp: Date.now()
+        });
+      }
+    } catch (error) {
+      this.logger.error(`체험용 셰프 WebSocket 로그아웃 실패: ${userId}`, error);
+      
+      client.emit('trial_chef_logout_response', {
+        success: false,
+        message: '로그아웃 처리 중 오류가 발생했습니다',
+        error: error instanceof Error ? error.message : 'Unknown error',
+        timestamp: Date.now()
+      });
+    }
+  }
+
+  /**
+   * 체험용 셰프 계정 상태를 모든 클라이언트에 브로드캐스트
+   */
+  private async broadcastTrialChefStatusUpdate() {
+    try {
+      const availableCount = await this.authService.getAvailableTrialChefCount();
+      
+      this.server.emit('trial_chef_status_update', {
+        availableCount,
+        maxCount: 21,
+        isAvailable: availableCount > 0,
+        message: `${availableCount}개의 체험용 셰프 계정을 사용할 수 있습니다`,
+        timestamp: Date.now()
+      });
+
+      this.logger.log(`📢 체험용 셰프 상태 브로드캐스트: ${availableCount}/21 사용 가능`);
+    } catch (error) {
+      this.logger.error('체험용 셰프 상태 브로드캐스트 실패:', error);
+    }
   }
 }

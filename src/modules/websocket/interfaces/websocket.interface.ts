@@ -19,6 +19,7 @@ export interface WebSocketEventData {
   iterations?: number;
   queries?: string[];
   roomId?: string;
+  sessionId?: string;
   metadata?: Record<string, any>;
 }
 

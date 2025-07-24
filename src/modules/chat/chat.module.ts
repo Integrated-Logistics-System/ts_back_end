@@ -1,10 +1,10 @@
 import { Module } from '@nestjs/common';
 import { ChatHistoryService } from './chat-history.service';
-import { RedisService } from '../redis/redis.service';
+import { CacheModule } from '../cache/cache.module';
 
 @Module({
-  imports: [],
-  providers: [ChatHistoryService, RedisService],
+  imports: [CacheModule],
+  providers: [ChatHistoryService],
   exports: [ChatHistoryService],
 })
 export class ChatModule {}
