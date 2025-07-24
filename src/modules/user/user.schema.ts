@@ -18,8 +18,7 @@ export class User {
   @Prop({ required: true })
   name!: string;
 
-  // 🎯 사용자 설정은 JSON으로 압축 저장
-  // TODO: settings 필드에 대한 더 엄격한 스키마 정의 (예: Nested Schema) 고려
+  // 🎯 개인화를 위한 확장된 사용자 프로필
   @Prop({
     type: Object,
     default: {}
@@ -27,16 +26,74 @@ export class User {
   settings!: {
     allergies?: string[];
     preferences?: string[];
-    cookingLevel?: string;
+    cookingLevel?: 'beginner' | 'intermediate' | 'advanced' | 'expert';
     language?: string;
   };
 
-  // 📊 간단한 통계만
+  // 📊 개인화 데이터 수집
+  @Prop({
+    type: Object,
+    default: {}
+  })
+  demographics!: {
+    age?: number;
+    gender?: 'male' | 'female' | 'other';
+    location?: string;
+    householdSize?: number;
+    budget?: 'low' | 'medium' | 'high' | 'premium';
+  };
+
+  @Prop({
+    type: Object,
+    default: {}
+  })
+  dietaryInfo!: {
+    dietType?: 'vegetarian' | 'vegan' | 'keto' | 'paleo' | 'mediterranean' | 'none';
+    intolerances?: string[];
+    religiousRestrictions?: string[];
+    healthGoals?: string[];
+  };
+
+  @Prop({
+    type: Object,
+    default: {}
+  })
+  cookingProfile!: {
+    availableTime?: number; // 평균 조리 가능 시간(분)
+    kitchenEquipment?: string[];
+    frequentIngredients?: string[];
+    avoidedIngredients?: string[];
+    preferredMealTimes?: string[];
+    cookingFrequency?: 'daily' | 'weekly' | 'monthly' | 'rarely';
+  };
+
+  // 📈 사용 통계 및 행동 데이터
   @Prop({ default: 0 })
   loginCount!: number;
 
   @Prop()
   lastLoginAt!: Date;
+
+  @Prop({ default: 0 })
+  recipeViewCount!: number;
+
+  @Prop({ default: 0 })
+  recipeCookCount!: number;
+
+  @Prop({ type: [String], default: [] })
+  recentSearches!: string[];
+
+  @Prop({
+    type: Object,
+    default: {}
+  })
+  behaviorMetrics!: {
+    avgSessionDuration?: number;
+    preferredTimeOfDay?: string[];
+    mostActiveDays?: string[];
+    searchPatterns?: string[];
+    interactionScore?: number;
+  };
 }
 
 export const UserSchema = SchemaFactory.createForClass(User);
