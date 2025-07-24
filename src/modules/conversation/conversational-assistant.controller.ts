@@ -12,8 +12,8 @@ import {
 import { Response } from 'express';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { ConversationManagerService } from './conversation-manager.service';
-import { PersonalizedResponseService } from './personalized-response.service';
 import { ChatHistoryService } from '../chat/chat-history.service';
+import { AiService } from '../ai/ai.service';
 
 export interface ConversationalRequest {
   message: string;
@@ -27,8 +27,8 @@ export class ConversationalAssistantController {
 
   constructor(
     private readonly conversationManager: ConversationManagerService,
-    private readonly personalizedResponse: PersonalizedResponseService,
     private readonly chatHistoryService: ChatHistoryService,
+    private readonly aiService: AiService,
   ) {}
 
   // ================== 🎯 메인 대화형 엔드포인트 ==================
@@ -58,50 +58,58 @@ export class ConversationalAssistantController {
       conversationState.userIntent = this.classifyUserIntent(body.message);
       conversationState.currentStage = this.determineConversationStage(conversationState, body.message);
 
-      // 3. 개인화된 응답 생성
-      const personalizedResponse = await this.personalizedResponse.generatePersonalizedResponse(
-        userId,
-        body.message,
-        conversationState
-      );
+      // 3. 간단한 AI 응답 생성 (개인화 제거)
+      const context = this.conversationManager.buildConversationContext(conversationState);
+      const prompt = `${context}\n\n사용자 메시지: ${body.message}\n\n도움이 되는 응답을 생성해주세요.`;
+      
+      const aiResponse = await this.aiService.generateResponse(prompt, {
+        temperature: 0.7,
+        maxTokens: 1000
+      });
+
+      const simpleResponse = {
+        content: aiResponse,
+        tone: 'helpful' as const,
+        actionRequired: false,
+        suggestedFollowups: [] as string[],
+        recipeData: [] as any[]
+      };
 
       // 4. 대화 상태 업데이트
       await this.conversationManager.updateConversationState(
         conversationState.sessionId,
         body.message,
-        personalizedResponse.content,
-        personalizedResponse.recipeData as any[]
+        simpleResponse.content,
+        simpleResponse.recipeData as any[]
       );
 
       // 5. 대화 히스토리에 저장 (RAG용)
-      if (body.usePersonalization !== false) {
-        await this.chatHistoryService.saveChatMessage(
-          userId,
-          body.message,
-          personalizedResponse.content,
-          'recipe_query',
-          {
-            processingTime: Date.now() - startTime,
-            hasRecipe: !!personalizedResponse.recipeData,
-          }
-        );
-      }
+      await this.chatHistoryService.saveChatMessage(
+        userId,
+        body.message,
+        simpleResponse.content,
+        'recipe_query',
+        {
+          processingTime: Date.now() - startTime,
+          hasRecipe: !!simpleResponse.recipeData,
+        }
+      );
 
       return {
-        content: personalizedResponse.content,
+        content: simpleResponse.content,
         sessionId: conversationState.sessionId,
         metadata: {
           intent: conversationState.userIntent,
           stage: conversationState.currentStage,
-          tone: personalizedResponse.tone,
-          actionRequired: personalizedResponse.actionRequired,
+          tone: simpleResponse.tone,
+          actionRequired: simpleResponse.actionRequired,
           processingTime: Date.now() - startTime,
           userId: userId,
           model: 'Conversational AI Assistant v2.0',
-          personalizationUsed: body.usePersonalization !== false
+          personalizationUsed: false
         },
-        suggestedFollowups: personalizedResponse.suggestedFollowups,
-        recipeData: personalizedResponse.recipeData,
+        suggestedFollowups: simpleResponse.suggestedFollowups,
+        recipeData: simpleResponse.recipeData,
         timestamp: new Date().toISOString(),
       };
 
@@ -167,15 +175,25 @@ export class ConversationalAssistantController {
 
 `);
 
-      // 3. 개인화된 응답 생성
-      const personalizedResponse = await this.personalizedResponse.generatePersonalizedResponse(
-        userId,
-        body.message,
-        conversationState
-      );
+      // 3. 간단한 AI 응답 생성 (개인화 제거)
+      const context = this.conversationManager.buildConversationContext(conversationState);
+      const prompt = `${context}\n\n사용자 메시지: ${body.message}\n\n도움이 되는 응답을 생성해주세요.`;
+      
+      const aiResponse = await this.aiService.generateResponse(prompt, {
+        temperature: 0.7,
+        maxTokens: 1000
+      });
+
+      const simpleResponse = {
+        content: aiResponse,
+        tone: 'helpful' as const,
+        actionRequired: false,
+        suggestedFollowups: [] as string[],
+        recipeData: [] as any[]
+      };
 
       // 4. 응답을 청크로 나누어 스트리밍
-      const chunks = this.splitIntoChunks(personalizedResponse.content);
+      const chunks = this.splitIntoChunks(simpleResponse.content);
       
       for (let i = 0; i < chunks.length; i++) {
         const chunk = chunks[i];
@@ -188,8 +206,8 @@ export class ConversationalAssistantController {
           isComplete: isLast,
           metadata: isLast ? {
             intent: conversationState.userIntent,
-            tone: personalizedResponse.tone,
-            suggestedFollowups: personalizedResponse.suggestedFollowups
+            tone: simpleResponse.tone,
+            suggestedFollowups: simpleResponse.suggestedFollowups
           } : undefined,
           timestamp: new Date().toISOString()
         })}
@@ -204,14 +222,14 @@ export class ConversationalAssistantController {
       await this.conversationManager.updateConversationState(
         conversationState.sessionId,
         body.message,
-        personalizedResponse.content,
-        personalizedResponse.recipeData as any[]
+        simpleResponse.content,
+        simpleResponse.recipeData as any[]
       );
 
       await this.chatHistoryService.saveChatMessage(
         userId,
         body.message,
-        personalizedResponse.content,
+        simpleResponse.content,
         'recipe_query'
       );
 

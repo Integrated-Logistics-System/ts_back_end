@@ -66,3 +66,9 @@ PROMPT_DESIGN_GUIDE.md
 migrate-users.js
 setup-mongodb.js
 test-csv.js
+
+# operational data
+/backups
+/data
+/progress
+/scripts

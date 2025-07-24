@@ -18,6 +18,7 @@ import { ElasticsearchModule } from './modules/elasticsearch/elasticsearch.modul
 import { AiModule } from './modules/ai/ai.module';
 import { LanggraphModule } from './modules/langgraph/langgraph.module';
 import { ConversationModule } from './modules/conversation/conversation.module';
+import { EmbeddingModule } from './modules/embedding/embedding.module';
 
 // ==================== Communication Domain ====================
 import { WebsocketModule } from './modules/websocket/websocket.module';
@@ -58,6 +59,7 @@ import { WebsocketModule } from './modules/websocket/websocket.module';
         timeout: 30000,
       },
     }),                                   // 통합 AI 서비스 (Ollama)
+    EmbeddingModule,                      // nomic-embed-text 임베딩 생성 서비스
     LanggraphModule,                      // LangGraph 기반 워크플로우 시스템
     ConversationModule,                   // ChatGPT 스타일 대화형 AI 어시스턴트
 

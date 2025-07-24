@@ -119,9 +119,32 @@ WebSocket implementation supports:
 - **Chat message handling**: Persistent conversation history
 - **Connection management**: Automatic reconnection and cleanup
 
-### Search Architecture
-Hybrid search combining:
-- **Elasticsearch**: Fast text search with Korean language support
+### Elasticsearch Vector Search
+The recipe search system uses semantic vector embeddings for enhanced search accuracy:
+
+**Vector Fields Configuration:**
+- **Primary Vector Field**: `embedding` (384 dimensions, cosine similarity)
+  - Model: nomic-embed-text (v1.5) 
+  - Generated from: recipe name, description, ingredients, and tags
+- **Alternative Vector Field**: `embeddingGranite768` (768 dimensions, cosine similarity)
+  - Model: granite-embedding:278m
+  - Backup/testing configuration
+
+**Vectorized Content Format:**
+```
+요리명: [recipe.name]
+설명: [recipe.description]  
+재료: [recipe.ingredients.join(', ')]
+태그: [recipe.tags.join(', ')]
+```
+
+**Vector Metadata Fields:**
+- `embeddingVersion`: Model version tracking
+- `embeddingText`: Source text used for embedding generation
+- `embeddingGeneratedAt`: Generation timestamp
+
+**Search Architecture:**
+- **Elasticsearch**: Semantic vector search + text search with Korean language support
 - **MongoDB**: Complex relationship queries and metadata
 - **Allergy filtering**: Multi-level safety verification
 - **Caching**: Search result optimization with Redis

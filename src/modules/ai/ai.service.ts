@@ -191,16 +191,26 @@ export class AiService implements OnModuleInit {
     // ================== Provider별 구현 ==================
 
     private async generateWithOllama(prompt: string, options?: { temperature?: number; maxTokens?: number; stopSequences?: string[] }): Promise<AiResponse> {
+        // URL hallucination 방지를 위한 제약 조건 추가
+        const constrainedPrompt = `${prompt}
+
+중요한 제약사항:
+- 어떤 URL, 링크, 웹 주소도 포함하지 마세요
+- 유튜브 링크나 외부 사이트 링크를 생성하지 마세요
+- 존재하지 않는 링크를 만들어내지 마세요
+- 텍스트 기반의 레시피 정보에만 집중하세요`;
+
         const response = await fetch(`${this.config.url}/api/generate`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 model: this.config.model,
-                prompt,
+                prompt: constrainedPrompt,
                 stream: false,
                 options: {
                     temperature: options?.temperature || 0.7,
                     num_predict: options?.maxTokens || parseInt(process.env.OLLAMA_MAX_TOKENS || '4000'),
+                    stop: [...(options?.stopSequences || []), 'http://', 'https://', 'www.', 'youtube.com'],
                 },
             }),
         });
@@ -224,16 +234,26 @@ export class AiService implements OnModuleInit {
     }
 
     private async *streamWithOllama(prompt: string, options?: { temperature?: number; maxTokens?: number }): AsyncIterable<AiStreamResponse> {
+        // URL hallucination 방지를 위한 제약 조건 추가
+        const constrainedPrompt = `${prompt}
+
+중요한 제약사항:
+- 어떤 URL, 링크, 웹 주소도 포함하지 마세요
+- 유튜브 링크나 외부 사이트 링크를 생성하지 마세요
+- 존재하지 않는 링크를 만들어내지 마세요
+- 텍스트 기반의 레시피 정보에만 집중하세요`;
+
         const response = await fetch(`${this.config.url}/api/generate`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 model: this.config.model,
-                prompt,
+                prompt: constrainedPrompt,
                 stream: true,
                 options: {
                     temperature: options?.temperature || 0.7,
                     num_predict: options?.maxTokens || parseInt(process.env.OLLAMA_MAX_TOKENS || '4000'),
+                    stop: ['http://', 'https://', 'www.', 'youtube.com'],
                 },
             }),
         });
@@ -271,7 +291,7 @@ interface OllamaStreamChunk {
                         };
 
                         if (data.done) return;
-                    } catch (_e) { // eslint-disable-line @typescript-eslint/no-unused-vars
+                    } catch {
                         // JSON 파싱 에러 무시
                     }
                 }
@@ -378,7 +398,7 @@ interface OllamaStreamChunk {
                                         done: false,
                                     };
                                 }
-                            } catch (_e) {
+                            } catch {
                                 // JSON 파싱 에러 무시
                             }
                         }
@@ -494,7 +514,7 @@ interface OllamaStreamChunk {
                                     yield { content: '', done: true };
                                     return;
                                 }
-                            } catch (_e) {
+                            } catch {
                                 // JSON 파싱 에러 무시
                             }
                         }

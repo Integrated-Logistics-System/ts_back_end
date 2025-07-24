@@ -1,6 +1,5 @@
 import { Module } from '@nestjs/common';
 import { ConversationManagerService } from './conversation-manager.service';
-import { PersonalizedResponseService } from './personalized-response.service';
 import { ConversationalAssistantController } from './conversational-assistant.controller';
 import { ChatModule } from '../chat/chat.module';
 import { ElasticsearchModule } from '../elasticsearch/elasticsearch.module';
@@ -16,11 +15,9 @@ import { UserModule } from '../user/user.module';
   controllers: [ConversationalAssistantController],
   providers: [
     ConversationManagerService,
-    PersonalizedResponseService,
   ],
   exports: [
     ConversationManagerService,
-    PersonalizedResponseService,
   ],
 })
 export class ConversationModule {

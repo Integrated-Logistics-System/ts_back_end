@@ -2,8 +2,9 @@ import { Injectable, UnauthorizedException, ConflictException, Logger } from '@n
 import { JwtService } from '@nestjs/jwt';
 import { UserService } from '../user/user.service';
 import { CacheService } from '../cache/cache.service';
+import { TrialChefService } from '../user/trial-chef.service';
 import * as bcrypt from 'bcrypt';
-import { ConfigService } from '@nestjs/config'; // ConfigService 추가
+import { ConfigService } from '@nestjs/config';
 
 export interface UserSessionData {
   id: string;
@@ -13,9 +14,11 @@ export interface UserSessionData {
   preferences?: string[];
   allergies?: string[];
   token: string;
-  refreshToken?: string; // Refresh Token 추가
+  refreshToken?: string;
   loginAt: string;
   lastActivity?: string;
+  isTrialUser?: boolean; // 체험용 계정 여부
+  trialUsername?: string; // 체험용 계정명
 }
 
 @Injectable()
@@ -29,10 +32,11 @@ export class AuthService {
   private readonly SESSION_TTL = 86400 * 7; // 7일
 
   constructor(
-      private readonly userService: UserService, // UserService 주입
+      private readonly userService: UserService,
       private readonly jwtService: JwtService,
-      private readonly cacheService: CacheService, // Redis 세션 관리를 위한 CacheService
-      private readonly configService: ConfigService, // ConfigService 주입
+      private readonly cacheService: CacheService,
+      private readonly configService: ConfigService,
+      private readonly trialChefService: TrialChefService,
   ) {}
 
   async register(
@@ -136,6 +140,14 @@ export class AuthService {
 
       const userId = String(user._id);
 
+      // 🚫 중복 로그인 방지 - 기존 세션 확인
+      const existingSession = await this.getUserSession(userId);
+      if (existingSession) {
+        // 기존 세션이 있으면 로그아웃 처리 후 새로 로그인
+        await this.logout(userId);
+        this.logger.log(`기존 세션 발견하여 로그아웃 처리: ${email}`);
+      }
+
       // JWT 토큰 생성
       const token = this.jwtService.sign({
         sub: userId,
@@ -160,7 +172,8 @@ export class AuthService {
           preferences: user.settings?.preferences,
           token,
           loginAt: new Date().toISOString(),
-          lastActivity: new Date().toISOString()
+          lastActivity: new Date().toISOString(),
+          isTrialUser: false
         };
         await this.saveUserSession(userId, sessionData);
         this.logger.log(`💾 로그인 세션 저장 완료: ${email}`);
@@ -181,7 +194,8 @@ export class AuthService {
           name: user.name,
           allergies: user.settings?.allergies,
           cookingLevel: user.settings?.cookingLevel,
-          preferences: user.settings?.preferences
+          preferences: user.settings?.preferences,
+          isTrialUser: false
         }
       };
     } catch (error: unknown) { // eslint-disable-line @typescript-eslint/no-unused-vars
@@ -190,6 +204,142 @@ export class AuthService {
       }
       this.logger.error(`Login error for ${email}:`, error instanceof Error ? error.message : 'Unknown error');
       throw new UnauthorizedException('로그인 처리 중 오류가 발생했습니다');
+    }
+  }
+
+  /**
+   * 체험용 셰프 계정 로그인
+   */
+  async loginAsTrialChef(): Promise<{
+    success: boolean;
+    message: string;
+    token?: string;
+    user?: {
+      id: string;
+      username: string;
+      displayName: string;
+      isTrialUser: boolean;
+      cookingLevel: string;
+      preferences: string[];
+      allergies: string[];
+    };
+  }> {
+    this.logger.log('체험용 셰프 로그인 시도');
+
+    try {
+      // 세션 ID 생성 (임시)
+      const sessionId = `trial_session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      
+      // 사용 가능한 체험용 셰프 계정 할당
+      const trialChef = await this.trialChefService.assignTrialChef(sessionId);
+      
+      if (!trialChef) {
+        return {
+          success: false,
+          message: '현재 사용 가능한 체험용 셰프 계정이 없습니다. 잠시 후 다시 시도해주세요.'
+        };
+      }
+
+      // JWT 토큰 생성 (체험용 계정은 특별한 payload 사용)
+      const token = this.jwtService.sign({
+        sub: `trial_${trialChef.username}`,
+        username: trialChef.username,
+        sessionId: sessionId,
+        type: 'trial'
+      });
+
+      // 체험용 계정 세션 저장
+      try {
+        const sessionData: UserSessionData = {
+          id: `trial_${trialChef.username}`,
+          email: `${trialChef.username}@trial.local`,
+          name: trialChef.displayName,
+          allergies: trialChef.defaultSettings.allergies,
+          cookingLevel: trialChef.defaultSettings.cookingLevel,
+          preferences: trialChef.defaultSettings.preferences,
+          token,
+          loginAt: new Date().toISOString(),
+          lastActivity: new Date().toISOString(),
+          isTrialUser: true,
+          trialUsername: trialChef.username
+        };
+        
+        await this.saveUserSession(`trial_${trialChef.username}`, sessionData);
+        this.logger.log(`💾 체험용 셰프 세션 저장 완료: ${trialChef.username}`);
+      } catch (sessionError: unknown) {
+        this.logger.warn('체험용 셰프 세션 저장 실패:', sessionError instanceof Error ? sessionError.message : 'Unknown error');
+      }
+
+      this.logger.log(`✅ 체험용 셰프 로그인 성공: ${trialChef.username}`);
+      return {
+        success: true,
+        message: '체험용 셰프 로그인 성공',
+        token,
+        user: {
+          id: `trial_${trialChef.username}`,
+          username: trialChef.username,
+          displayName: trialChef.displayName,
+          isTrialUser: true,
+          cookingLevel: trialChef.defaultSettings.cookingLevel,
+          preferences: trialChef.defaultSettings.preferences,
+          allergies: trialChef.defaultSettings.allergies
+        }
+      };
+    } catch (error: unknown) {
+      this.logger.error('체험용 셰프 로그인 실패:', error instanceof Error ? error.message : 'Unknown error');
+      return {
+        success: false,
+        message: '체험용 셰프 로그인 처리 중 오류가 발생했습니다'
+      };
+    }
+  }
+
+  /**
+   * 체험용 셰프 계정 사용 가능 개수 조회
+   */
+  async getAvailableTrialChefCount(): Promise<number> {
+    try {
+      return await this.trialChefService.getAvailableChefCount();
+    } catch (error) {
+      this.logger.error('체험용 셰프 계정 개수 조회 실패:', error);
+      return 0;
+    }
+  }
+
+  /**
+   * 체험용 셰프 로그아웃
+   */
+  async logoutTrialChef(userId: string): Promise<{ success: boolean; message: string }> {
+    try {
+      // 체험용 계정 ID에서 username 추출
+      const username = userId.replace('trial_', '');
+      
+      // 세션에서 sessionId 조회
+      const session = await this.getUserSession(userId);
+      let sessionId: string | undefined;
+      
+      if (session?.trialUsername) {
+        // 캐시에서 sessionId 조회
+        const cachedSessionId = await this.cacheService.get<string>(`trial_chef_session_reverse:${username}`);
+        sessionId = cachedSessionId || undefined;
+      }
+
+      // 체험용 셰프 해제
+      if (sessionId) {
+        await this.trialChefService.releaseTrialChef(sessionId);
+      }
+
+      // 일반 로그아웃 처리 (세션 삭제)
+      const result = await this.logout(userId);
+      
+      this.logger.log(`🚪 체험용 셰프 로그아웃 완료: ${username}`);
+      return result;
+    } catch (error) {
+      this.logger.error(`체험용 셰프 로그아웃 실패 for ${userId}:`, error);
+      return {
+        success: false,
+        message: '체험용 셰프 로그아웃 실패'
+      };
     }
   }
 
