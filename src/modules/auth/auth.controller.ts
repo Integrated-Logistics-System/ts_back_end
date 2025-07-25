@@ -81,7 +81,7 @@ export class AuthController {
         message: '토큰 갱신 성공',
         ...result
       };
-    } catch (error) {
+    } catch (_error) {
       throw new UnauthorizedException('리프레시 토큰이 유효하지 않거나 만료되었습니다');
     }
   }
@@ -140,75 +140,4 @@ export class AuthController {
     return result;
   }
 
-  @Post('trial-login')
-  @Public()
-  @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: '체험용 셰프 계정으로 로그인' })
-  @ApiResponse({ status: 200, description: '체험용 셰프 로그인 성공' })
-  @ApiResponse({ status: 409, description: '사용 가능한 체험용 계정이 없습니다' })
-  async trialLogin() {
-    const result = await this.authService.loginAsTrialChef();
-    
-    if (!result.success) {
-      return {
-        success: false,
-        message: result.message,
-        statusCode: HttpStatus.CONFLICT
-      };
-    }
-
-    return result;
-  }
-
-  @Get('trial-count')
-  @Public()
-  @ApiOperation({ summary: '사용 가능한 체험용 셰프 계정 수 조회' })
-  @ApiResponse({ 
-    status: 200, 
-    description: '사용 가능한 체험용 셰프 계정 수',
-    schema: {
-      type: 'object',
-      properties: {
-        success: { type: 'boolean' },
-        availableCount: { type: 'number' },
-        message: { type: 'string' }
-      }
-    }
-  })
-  async getTrialChefCount() {
-    const availableCount = await this.authService.getAvailableTrialChefCount();
-    
-    return {
-      success: true,
-      availableCount,
-      message: `${availableCount}개의 체험용 셰프 계정을 사용할 수 있습니다`
-    };
-  }
-
-  @Post('trial-logout')
-  @Public()
-  @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: '체험용 셰프 계정 로그아웃' })
-  @ApiResponse({ status: 200, description: '체험용 셰프 로그아웃 성공' })
-  @ApiBody({
-    schema: {
-      type: 'object',
-      properties: {
-        userId: {
-          type: 'string',
-          description: '체험용 사용자 ID (trial_chef_xxx 형태)',
-          example: 'trial_chef_001'
-        }
-      },
-      required: ['userId']
-    }
-  })
-  async trialLogout(@Body() body: { userId: string }) {
-    if (!body.userId) {
-      throw new UnauthorizedException('사용자 ID가 필요합니다');
-    }
-
-    const result = await this.authService.logoutTrialChef(body.userId);
-    return result;
-  }
 }

@@ -44,7 +44,7 @@ export {
 
 // Modular services
 import { RecipeSearchService } from './search/recipe-search.service';
-import { RecipeManagementService } from './management/recipe-management.service';
+// import { RecipeManagementService } from './management/recipe-management.service'; // Removed
 import { AllergenProcessor } from './processors/allergen-processor.service';
 
 /**
@@ -70,7 +70,7 @@ export class ElasticsearchService implements OnModuleInit {
   constructor(
     private readonly configService: ConfigService,
     private readonly recipeSearchService: RecipeSearchService,
-    private readonly recipeManagementService: RecipeManagementService,
+    // private readonly recipeManagementService: RecipeManagementService, // Removed
     private readonly allergenProcessor: AllergenProcessor,
     @Inject('ELASTICSEARCH_CLIENT') private readonly client: Client,
   ) {
@@ -176,62 +176,62 @@ export class ElasticsearchService implements OnModuleInit {
   // ==================== Management Operations ====================
 
   /**
-   * 새 레시피 저장
+   * 새 레시피 저장 (기능 제거됨)
    */
   async saveRecipe(input: RecipeCreateInput): Promise<ElasticsearchRecipe> {
     this.ensureConnection();
-    return this.recipeManagementService.saveRecipe(input);
+    throw new Error('Recipe management service has been removed');
   }
 
   /**
-   * 레시피 업데이트
+   * 레시피 업데이트 (기능 제거됨)
    */
   async updateRecipe(input: RecipeUpdateInput): Promise<ElasticsearchRecipe> {
     this.ensureConnection();
-    return this.recipeManagementService.updateRecipe(input);
+    throw new Error('Recipe management service has been removed');
   }
 
   /**
-   * 레시피 삭제
+   * 레시피 삭제 (기능 제거됨)
    */
   async deleteRecipe(id: string): Promise<boolean> {
     this.ensureConnection();
-    return this.recipeManagementService.deleteRecipe(id);
+    throw new Error('Recipe management service has been removed');
   }
 
   /**
-   * 대량 레시피 저장
+   * 대량 레시피 저장 (기능 제거됨)
    */
   async bulkSaveRecipes(recipes: Partial<ElasticsearchRecipe>[]): Promise<BulkOperationResult> {
     this.ensureConnection();
-    return this.recipeManagementService.bulkSaveRecipes(recipes);
+    throw new Error('Recipe management service has been removed');
   }
 
   /**
-   * 대량 레시피 업데이트
+   * 대량 레시피 업데이트 (기능 제거됨)
    */
   async bulkUpdateRecipes(updates: RecipeUpdateInput[]): Promise<BulkOperationResult> {
     this.ensureConnection();
-    return this.recipeManagementService.bulkUpdateRecipes(updates);
+    throw new Error('Recipe management service has been removed');
   }
 
   /**
-   * 대량 레시피 삭제
+   * 대량 레시피 삭제 (기능 제거됨)
    */
   async bulkDeleteRecipes(ids: string[]): Promise<BulkOperationResult> {
     this.ensureConnection();
-    return this.recipeManagementService.bulkDeleteRecipes(ids);
+    throw new Error('Recipe management service has been removed');
   }
 
   /**
-   * 레시피 복제
+   * 레시피 복제 (기능 제거됨)
    */
   async duplicateRecipe(
     originalId: string, 
     modifications: Partial<ElasticsearchRecipe> = {}
   ): Promise<ElasticsearchRecipe> {
     this.ensureConnection();
-    return this.recipeManagementService.duplicateRecipe(originalId, modifications);
+    throw new Error('Recipe management service has been removed');
   }
 
   // ==================== Allergen Operations ====================

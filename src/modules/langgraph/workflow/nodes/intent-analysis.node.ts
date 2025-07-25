@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { BaseNode } from './base.node';
 import { GraphState } from '../workflow.builder';
-import { UserStatusService } from '../../../user/user-status.service';
+// import { UserStatusService } from '../../../user/user-status.service'; // Removed
 
 /**
  * Intent Analysis Node
@@ -9,9 +9,7 @@ import { UserStatusService } from '../../../user/user-status.service';
  */
 @Injectable()
 export class IntentAnalysisNode extends BaseNode {
-  constructor(
-    private readonly userStatusService: UserStatusService,
-  ) {
+  constructor() {
     super();
   }
 
@@ -21,18 +19,9 @@ export class IntentAnalysisNode extends BaseNode {
   async execute(state: GraphState): Promise<Partial<GraphState>> {
     this.logger.log(`🧠 Intent Analysis: "${state.query}"`);
 
-    // Load user status for personalization
-    let userStatus = '';
-    if (state.userId) {
-      try {
-        userStatus = await this.userStatusService.getContextForLangGraph(state.userId);
-        this.logger.log(`👤 User Status loaded for ${state.userId}: "${userStatus}"`);
-      } catch (error) {
-        this.logger.error(`❌ Failed to load user status for ${state.userId}:`, error);
-      }
-    } else {
-      this.logger.log(`👤 No userId provided - using anonymous mode`);
-    }
+    // Load user status for personalization (service removed)
+    const userStatus = state.userId ? `User ${state.userId}` : 'Anonymous user';
+    this.logger.log(`👤 User Status: ${userStatus}`);
 
     // Analyze intent using keyword matching
     const { intent, confidence } = this.analyzeIntent(state.query);

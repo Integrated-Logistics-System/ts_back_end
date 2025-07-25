@@ -2,7 +2,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ElasticsearchService } from '../elasticsearch/elasticsearch.service';
 import { AiService } from '../ai/ai.service';
-import { UserPersonalizationService } from '../user/user-personalization.service';
+// import { UserPersonalizationService } from '../user/user-personalization.service'; // Removed
 import axios from 'axios';
 
 export interface RAGContext {
@@ -60,7 +60,7 @@ export class AdvancedRAGService {
   constructor(
     private readonly elasticsearchService: ElasticsearchService,
     private readonly aiService: AiService,
-    private readonly personalizationService: UserPersonalizationService,
+    // private readonly personalizationService: UserPersonalizationService, // Removed
   ) {}
 
   /**
@@ -272,24 +272,8 @@ export class AdvancedRAGService {
       return results.sort((a, b) => b.relevanceScore - a.relevanceScore);
     }
 
-    // 개인화 점수 계산
-    const personalizedResults = await Promise.all(
-      results.map(async (result) => {
-        const personalizedScore = await this.personalizationService.calculatePersonalizedScore(
-          context.userId!,
-          result.recipeId,
-          result.relevanceScore
-        );
-
-        return {
-          ...result,
-          personalizedScore,
-          finalScore: (result.relevanceScore * 0.6) + (personalizedScore * 0.4),
-        };
-      })
-    );
-
-    return personalizedResults.sort((a, b) => b.finalScore - a.finalScore);
+    // 기본 관련도 점수로 정렬 (개인화 서비스 제거됨)
+    return results.sort((a, b) => b.relevanceScore - a.relevanceScore);
   }
 
   /**

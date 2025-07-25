@@ -12,7 +12,7 @@ import {
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiQuery } from '@nestjs/swagger';
 import { ElasticsearchService } from '../elasticsearch.service';
-import { VectorSearchCacheService } from '../services/vector-search-cache.service';
+// import { VectorSearchCacheService } from '../services/vector-search-cache.service'; // Removed
 import { 
   VectorSearchDto, 
   VectorSearchQueryDto, 
@@ -37,7 +37,7 @@ export class VectorSearchController {
 
   constructor(
     private readonly elasticsearchService: ElasticsearchService,
-    private readonly cacheService: VectorSearchCacheService
+    // private readonly cacheService: VectorSearchCacheService // Removed
   ) {}
 
   /**
@@ -74,20 +74,14 @@ export class VectorSearchController {
       };
 
       // 캐시된 결과 확인
-      const cachedResult = await this.cacheService.getCachedResult(searchOptions);
-      if (cachedResult) {
-        const processingTime = Date.now() - startTime;
-        this.logger.log(`✅ Vector search (cached): ${cachedResult.results.length} results in ${processingTime}ms`);
-        return cachedResult;
-      }
+      // Cache service removed - no caching available
 
       // 벡터 검색 실행
       const result = await this.elasticsearchService.vectorSearch(searchOptions);
 
       // 결과 캐싱 (비동기로 실행하여 응답 속도에 영향 없음)
-      this.cacheService.cacheResult(searchOptions, result).catch(err => {
-        this.logger.warn('Failed to cache result:', err);
-      });
+      // Cache service removed - no caching
+      this.logger.debug('Cache service disabled');
 
       const processingTime = Date.now() - startTime;
       this.logger.log(`✅ Vector search completed: ${result.results.length} results in ${processingTime}ms`);
@@ -390,7 +384,8 @@ export class VectorSearchController {
   @ApiResponse({ status: 200, description: '캐시 무효화 성공' })
   async invalidateCache(): Promise<{ message: string; timestamp: string }> {
     try {
-      await this.cacheService.invalidateAll();
+      // Cache service removed - no cache to invalidate
+      this.logger.log('Cache invalidation skipped (cache disabled)');
       
       this.logger.log('🗑️  All vector search cache invalidated');
       
@@ -431,16 +426,17 @@ export class VectorSearchController {
   }> {
     try {
       const [cacheStats, healthCheck] = await Promise.all([
-        this.cacheService.getCacheStats(),
-        this.cacheService.healthCheck()
+        // Cache service removed
+        Promise.resolve({ hitRate: 0, totalQueries: 0 }),
+        Promise.resolve({ status: 'disabled' })
       ]);
 
       return {
         cache: {
           status: healthCheck.status,
-          totalKeys: cacheStats.totalKeys,
+          totalKeys: 0,
           hitRate: cacheStats.hitRate,
-          memoryUsage: cacheStats.memoryUsage
+          memoryUsage: 0
         },
         health: healthCheck,
         stats: cacheStats,
@@ -482,12 +478,11 @@ export class VectorSearchController {
     lastUpdated: string;
   }> {
     try {
-      const queryLimit = Math.min(limit || 10, 50);
-      const popularQueries = await this.cacheService.getPopularQueries(queryLimit);
+      // Cache service removed - return empty array
 
       return {
-        queries: popularQueries,
-        totalQueries: popularQueries.length,
+        queries: [],
+        totalQueries: 0,
         lastUpdated: new Date().toISOString()
       };
 
@@ -522,9 +517,8 @@ export class VectorSearchController {
   }> {
     try {
       // 비동기로 워밍업 실행 (응답 속도를 위해)
-      this.cacheService.warmupCache(warmupDto.queries).catch(err => {
-        this.logger.error('Cache warmup failed:', err);
-      });
+      // Cache service removed - skip warmup
+      this.logger.log('Cache warmup skipped (cache disabled)');
 
       this.logger.log(`🔥 Cache warmup started for ${warmupDto.queries.length} queries`);
 

@@ -300,50 +300,6 @@ export class UserService {
         }
     }
 
-    // ================== 통계 메서드 (MongoDB 최소 사용) ==================
-
-    async getUserStats(): Promise<{
-        totalUsers: number;
-        activeToday: number;
-        newThisWeek: number;
-    }> {
-        try {
-            const today = new Date();
-            const weekAgo = new Date(today.getTime() - 7 * 24 * 60 * 60 * 1000);
-
-            const [totalUsers, activeToday, newThisWeek] = await Promise.all([
-                this.userModel.countDocuments(),
-                this.userModel.countDocuments({
-                    lastLoginAt: { $gte: new Date(today.setHours(0, 0, 0, 0)) }
-                }),
-                this.userModel.countDocuments({
-                    createdAt: { $gte: weekAgo }
-                })
-            ]);
-
-            return { totalUsers, activeToday, newThisWeek };
-        } catch (error) {
-            this.logger.error(`User stats failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
-            return { totalUsers: 0, activeToday: 0, newThisWeek: 0 };
-        }
-    }
-
-    // 🗑️ 비활성 사용자 정리 (월 1회 실행)
-    async cleanupInactiveUsers(): Promise<void> {
-        try {
-            const sixMonthsAgo = new Date();
-            sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
-
-            const result = await this.userModel.deleteMany({
-                lastLoginAt: { $lt: sixMonthsAgo },
-                loginCount: { $lte: 2 } // 로그인 2회 이하
-            });
-
-            this.logger.log(`🗑️ Cleaned up ${result.deletedCount} inactive users`);
-        } catch (error) {
-            this.logger.error(`Cleanup failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
-        }
-    }
 
     // ================== Controller에서 요구하는 메서드들 ==================
 
@@ -423,24 +379,4 @@ export class UserService {
         }
     }
 
-    async updateUserPreferences(userId: string, preferences: string[]) {
-        try {
-            const settings = await this.getUserSettings(userId);
-            const updatedSettings = {
-                ...settings,
-                preferences
-            };
-            
-            await this.updateSettings(userId, updatedSettings);
-            
-            return {
-                success: true,
-                message: 'User preferences updated successfully',
-                preferences
-            };
-        } catch (error) {
-            this.logger.error(`Update user preferences failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
-            throw error;
-        }
-    }
 }

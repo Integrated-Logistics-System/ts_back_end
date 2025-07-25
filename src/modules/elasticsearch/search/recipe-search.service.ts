@@ -12,8 +12,8 @@ import {
   VectorSearchResult,
   VectorSearchResponse,
 } from '../types/elasticsearch.types';
-import { QueryBuilder } from '../utils/query-builder.util';
-import { ResponseFormatter } from '../utils/response-formatter.util';
+// import { QueryBuilder } from '../utils/query-builder.util'; // Removed
+// import { ResponseFormatter } from '../utils/response-formatter.util'; // Removed
 import { EmbeddingService } from '../../embedding/embedding.service';
 
 @Injectable()
@@ -23,8 +23,8 @@ export class RecipeSearchService {
 
   constructor(
     private readonly configService: ConfigService,
-    private readonly queryBuilder: QueryBuilder,
-    private readonly responseFormatter: ResponseFormatter,
+    // private readonly queryBuilder: QueryBuilder, // Removed
+    // private readonly responseFormatter: ResponseFormatter, // Removed
     private readonly embeddingService: EmbeddingService,
     @Inject('ELASTICSEARCH_CLIENT') private readonly client: Client,
   ) {}
@@ -36,10 +36,21 @@ export class RecipeSearchService {
     const startTime = Date.now();
     
     try {
-      const searchQuery = this.queryBuilder.buildBasicSearchQuery(query, options);
-      const response = await this.executeSearch(searchQuery);
+      // QueryBuilder와 ResponseFormatter가 제거되어 기본 검색으로 대체
+      const searchQuery = {
+        query: {
+          multi_match: {
+            query,
+            fields: ['name^3', 'description^2', 'ingredients', 'tags'],
+            type: 'best_fields'
+          }
+        },
+        size: options.limit || 10,
+        from: ((options.page || 1) - 1) * (options.limit || 10)
+      };
       
-      const recipes = this.responseFormatter.formatSearchResults(response);
+      const response = await this.executeSearch(searchQuery);
+      const recipes = response.hits.hits.map(hit => this.formatBasicResult(hit));
       const searchTime = Date.now() - startTime;
 
       return {
@@ -65,22 +76,8 @@ export class RecipeSearchService {
     const startTime = Date.now();
     
     try {
-      const searchQuery = this.queryBuilder.buildAdvancedSearchQuery(query, options);
-      const response = await this.executeSearch(searchQuery);
-      
-      const recipes = this.responseFormatter.formatSearchResults(response);
-      const searchTime = Date.now() - startTime;
-
-      return {
-        recipes,
-        total: response.hits.total.value,
-        page: options.page || 1,
-        limit: options.limit || 10,
-        hasMore: this.hasMoreResults(response, options),
-        searchTime,
-        aggregations: response.aggregations,
-      };
-
+      // 기본 검색으로 대체 (고급 기능 제거됨)
+      return await this.searchRecipes(query, options);
     } catch (error) {
       this.logger.error('Advanced search failed:', error);
       throw error;
@@ -93,7 +90,7 @@ export class RecipeSearchService {
   async getRecipeById(id: string): Promise<ElasticsearchRecipe | null> {
     try {
       const response = await this.executeGet(id);
-      return response ? this.responseFormatter.formatSingleResult(response) : null;
+      return response ? this.formatSingleResult(response) : null;
     } catch (error) {
       this.logger.error(`Failed to get recipe by ID ${id}:`, error);
       return null;
@@ -107,9 +104,14 @@ export class RecipeSearchService {
     if (!ids.length) return [];
 
     try {
-      const query = this.queryBuilder.buildMultiGetQuery(ids);
+      const query = {
+        query: {
+          terms: { _id: ids }
+        },
+        size: ids.length
+      };
       const response = await this.executeSearch(query);
-      return this.responseFormatter.formatSearchResults(response);
+      return response.hits.hits.map(hit => this.formatBasicResult(hit));
     } catch (error) {
       this.logger.error('Failed to get recipes by IDs:', error);
       return [];
@@ -131,11 +133,24 @@ export class RecipeSearchService {
         return [];
       }
 
-      const query = this.queryBuilder.buildSimilarityQuery(baseRecipe, limit, options);
-      const response = await this.executeSearch(query);
+      // 기본 유사도 검색 (태그 기반)
+      const query = {
+        query: {
+          bool: {
+            should: [
+              { terms: { tags: baseRecipe.tags } },
+              { match: { difficulty: baseRecipe.difficulty } }
+            ],
+            must_not: [
+              { term: { _id: recipeId } }
+            ]
+          }
+        },
+        size: limit
+      };
       
-      return this.responseFormatter.formatSearchResults(response)
-        .filter(recipe => recipe.id !== recipeId); // 자기 자신 제외
+      const response = await this.executeSearch(query);
+      return response.hits.hits.map(hit => this.formatBasicResult(hit));
 
     } catch (error) {
       this.logger.error('Failed to get similar recipes:', error);
@@ -153,15 +168,20 @@ export class RecipeSearchService {
     limit: number = 10
   ): Promise<ElasticsearchRecipe[]> {
     try {
-      const query = this.queryBuilder.buildRecommendationQuery(
-        userId,
-        userPreferences,
-        userAllergies,
-        limit
-      );
+      // 기본 추천 로직 (선호도 기반)
+      const query = {
+        query: {
+          bool: {
+            should: userPreferences.map(pref => ({ match: { tags: pref } })),
+            must_not: userAllergies.map(allergy => ({ term: { 'allergenInfo.allergens': allergy } }))
+          }
+        },
+        sort: [{ rating: { order: 'desc' } }],
+        size: limit
+      };
       
       const response = await this.executeSearch(query);
-      return this.responseFormatter.formatSearchResults(response);
+      return response.hits.hits.map(hit => this.formatBasicResult(hit));
 
     } catch (error) {
       this.logger.error('Failed to get recommended recipes:', error);
@@ -174,9 +194,18 @@ export class RecipeSearchService {
    */
   async getSearchSuggestions(query: string, limit: number = 5): Promise<string[]> {
     try {
-      const suggestQuery = this.queryBuilder.buildSuggestionQuery(query, limit);
-      const response = await this.executeSuggest(suggestQuery);
-      return this.responseFormatter.formatSuggestions(response);
+      // 기본 자동완성 (레시피 이름 매칭)
+      const response = await this.executeSearch({
+        query: {
+          match_phrase_prefix: {
+            name: { query, max_expansions: limit }
+          }
+        },
+        size: limit,
+        _source: ['name']
+      });
+      
+      return response.hits.hits.map(hit => hit._source.name).filter(Boolean);
     } catch (error) {
       this.logger.error('Failed to get search suggestions:', error);
       return [];
@@ -191,9 +220,15 @@ export class RecipeSearchService {
     limit: number = 10
   ): Promise<ElasticsearchRecipe[]> {
     try {
-      const query = this.queryBuilder.buildCategoryPopularQuery(category, limit);
+      const query = {
+        query: {
+          match: { tags: category }
+        },
+        sort: [{ rating: { order: 'desc' } }],
+        size: limit
+      };
       const response = await this.executeSearch(query);
-      return this.responseFormatter.formatSearchResults(response);
+      return response.hits.hits.map(hit => this.formatBasicResult(hit));
     } catch (error) {
       this.logger.error('Failed to get popular recipes by category:', error);
       return [];
@@ -205,9 +240,13 @@ export class RecipeSearchService {
    */
   async getRecentRecipes(limit: number = 10): Promise<ElasticsearchRecipe[]> {
     try {
-      const query = this.queryBuilder.buildRecentRecipesQuery(limit);
+      const query = {
+        query: { match_all: {} },
+        sort: [{ createdAt: { order: 'desc' } }],
+        size: limit
+      };
       const response = await this.executeSearch(query);
-      return this.responseFormatter.formatSearchResults(response);
+      return response.hits.hits.map(hit => this.formatBasicResult(hit));
     } catch (error) {
       this.logger.error('Failed to get recent recipes:', error);
       return [];
@@ -219,9 +258,13 @@ export class RecipeSearchService {
    */
   async getTopRatedRecipes(limit: number = 10): Promise<ElasticsearchRecipe[]> {
     try {
-      const query = this.queryBuilder.buildTopRatedQuery(limit);
+      const query = {
+        query: { match_all: {} },
+        sort: [{ rating: { order: 'desc' } }],
+        size: limit
+      };
       const response = await this.executeSearch(query);
-      return this.responseFormatter.formatSearchResults(response);
+      return response.hits.hits.map(hit => this.formatBasicResult(hit));
     } catch (error) {
       this.logger.error('Failed to get top rated recipes:', error);
       return [];
@@ -494,5 +537,48 @@ export class RecipeSearchService {
         searchMethod: vectorWeight > 0 && textWeight > 0 ? 'hybrid' : 'vector'
       } as VectorSearchResult;
     });
+  }
+
+  // ==================== Format Helper Methods ====================
+
+  /**
+   * 기본 검색 결과 포맷팅
+   */
+  private formatBasicResult(hit: any): ElasticsearchRecipe {
+    const source = hit._source;
+    return {
+      id: hit._id,
+      name: source.name || '',
+      nameKo: source.nameKo || source.name || '',
+      nameEn: source.nameEn || source.name || '',
+      description: source.description || '',
+      descriptionKo: source.descriptionKo || source.description || '',
+      descriptionEn: source.descriptionEn || source.description || '',
+      ingredients: Array.isArray(source.ingredients) ? source.ingredients : [],
+      ingredientsKo: Array.isArray(source.ingredientsKo) ? source.ingredientsKo : Array.isArray(source.ingredients) ? source.ingredients : [],
+      ingredientsEn: Array.isArray(source.ingredientsEn) ? source.ingredientsEn : Array.isArray(source.ingredients) ? source.ingredients : [],
+      steps: Array.isArray(source.steps) ? source.steps : [],
+      stepsKo: Array.isArray(source.stepsKo) ? source.stepsKo : Array.isArray(source.steps) ? source.steps : [],
+      stepsEn: Array.isArray(source.stepsEn) ? source.stepsEn : Array.isArray(source.steps) ? source.steps : [],
+      difficulty: source.difficulty || 'medium',
+      tags: Array.isArray(source.tags) ? source.tags : [],
+      tagsKo: Array.isArray(source.tagsKo) ? source.tagsKo : Array.isArray(source.tags) ? source.tags : [],
+      tagsEn: Array.isArray(source.tagsEn) ? source.tagsEn : Array.isArray(source.tags) ? source.tags : [],
+      minutes: source.minutes || 30,
+      nSteps: source.nSteps || 0,
+      nIngredients: source.nIngredients || 0,
+      servings: source.servings || 4,
+      isAiGenerated: source.isAiGenerated || false,
+      allergenInfo: source.allergenInfo || null,
+      createdAt: source.createdAt || new Date().toISOString(),
+      updatedAt: source.updatedAt || new Date().toISOString(),
+    };
+  }
+
+  /**
+   * 단일 결과 포맷팅
+   */
+  private formatSingleResult(hit: any): ElasticsearchRecipe {
+    return this.formatBasicResult(hit);
   }
 }

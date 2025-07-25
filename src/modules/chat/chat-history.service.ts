@@ -101,17 +101,6 @@ export class ChatHistoryService {
     }
   }
 
-  async getRecentRecipeQueries(userId: string, limit: number = 5): Promise<ChatMessage[]> {
-    try {
-      const history = await this.getChatHistory(userId, 20);
-      return history
-        .filter(msg => msg.type === 'recipe_query' && msg.metadata?.hasRecipe)
-        .slice(0, limit);
-    } catch (error) {
-      this.logger.error('Failed to get recent recipe queries:', error);
-      return [];
-    }
-  }
 
   // ================== 사용자 컨텍스트 관리 ==================
 
@@ -173,89 +162,7 @@ export class ChatHistoryService {
     }
   }
 
-  // ================== RAG 컨텍스트 생성 ==================
 
-  async buildRAGContext(userId: string, currentQuery: string): Promise<string> {
-    try {
-      const context = await this.getUserContext(userId);
-      const recentQueries = await this.getRecentRecipeQueries(userId, 3);
-      
-      let ragContext = '';
-
-      // 사용자 선호도 추가
-      if (context.userPreferences.allergies.length) {
-        ragContext += `사용자 알레르기: ${context.userPreferences.allergies.join(', ')}\n`;
-      }
-
-      // 최근 레시피 대화 추가
-      if (recentQueries.length) {
-        ragContext += '\n최근 레시피 대화:\n';
-        recentQueries.forEach((query, index) => {
-          ragContext += `${index + 1}. 질문: "${query.message}"\n`;
-          ragContext += `   답변: "${query.response.substring(0, 100)}..."\n`;
-        });
-      }
-
-      // 대화 패턴 분석
-      const conversationPattern = this.analyzeConversationPattern(context.recentMessages);
-      if (conversationPattern) {
-        ragContext += `\n대화 패턴: ${conversationPattern}\n`;
-      }
-
-      ragContext += `\n현재 질문: "${currentQuery}"\n`;
-      ragContext += '위 정보를 바탕으로 개인화된 레시피 답변을 제공해주세요.';
-
-      return ragContext;
-    } catch (error) {
-      this.logger.error('Failed to build RAG context:', error);
-      return currentQuery;
-    }
-  }
-
-  // ================== 분석 도구 ==================
-
-  private analyzeConversationPattern(recentMessages: ChatMessage[]): string {
-    if (recentMessages.length < 2) return '';
-
-    const recipeQueries = recentMessages.filter(msg => msg.type === 'recipe_query');
-    
-    if (recipeQueries.length >= 2) {
-      const keywords = recipeQueries.flatMap(msg => 
-        this.extractKeywords(msg.message)
-      );
-      
-      const frequentKeywords = this.getFrequentItems(keywords, 2);
-      
-      if (frequentKeywords.length) {
-        return `자주 물어보는 요리: ${frequentKeywords.join(', ')}`;
-      }
-    }
-
-    return '';
-  }
-
-  private extractKeywords(message: string): string[] {
-    const recipeKeywords = [
-      '김치찌개', '된장찌개', '비빔밥', '볶음밥', '파스타', '스테이크',
-      '치킨', '돼지고기', '소고기', '생선', '야채', '샐러드',
-      '국', '탕', '찌개', '볶음', '구이', '무침'
-    ];
-    
-    return recipeKeywords.filter(keyword => 
-      message.includes(keyword)
-    );
-  }
-
-  private getFrequentItems(items: string[], minCount: number): string[] {
-    const counts = items.reduce((acc, item) => {
-      acc[item] = (acc[item] || 0) + 1;
-      return acc;
-    }, {} as Record<string, number>);
-    
-    return Object.entries(counts)
-      .filter(([, count]) => count >= minCount)
-      .map(([item]) => item);
-  }
 
   private getDefaultContext(): ConversationContext {
     return {
@@ -289,37 +196,4 @@ export class ChatHistoryService {
     }
   }
 
-  async getChatStats(userId: string): Promise<{
-    totalMessages: number;
-    recipeQueries: number;
-    avgResponseTime: number;
-    mostAskedTopics: string[];
-  }> {
-    try {
-      const history = await this.getChatHistory(userId, 50);
-      
-      const recipeQueries = history.filter(msg => msg.type === 'recipe_query');
-      const avgResponseTime = history
-        .filter(msg => msg.metadata?.processingTime)
-        .reduce((acc, msg) => acc + (msg.metadata?.processingTime || 0), 0) / history.length;
-
-      const topics = history.flatMap(msg => this.extractKeywords(msg.message));
-      const mostAskedTopics = this.getFrequentItems(topics, 1).slice(0, 5);
-
-      return {
-        totalMessages: history.length,
-        recipeQueries: recipeQueries.length,
-        avgResponseTime: Math.round(avgResponseTime),
-        mostAskedTopics,
-      };
-    } catch (error) {
-      this.logger.error('Failed to get chat stats:', error);
-      return {
-        totalMessages: 0,
-        recipeQueries: 0,
-        avgResponseTime: 0,
-        mostAskedTopics: [],
-      };
-    }
-  }
 }

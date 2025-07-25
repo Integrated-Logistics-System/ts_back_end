@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Runnable } from '@langchain/core/runnables';
-import { UserStatusService } from '../user/user-status.service';
+// import { UserStatusService } from '../user/user-status.service'; // Removed
 import { CacheService } from '../cache/cache.service';
 import { WorkflowBuilder, GraphState } from './workflow/workflow.builder';
 
@@ -28,7 +28,7 @@ export class LangGraphService {
   private workflow!: Runnable<GraphState, GraphState>;
 
   constructor(
-    private readonly userStatusService: UserStatusService,
+    // private readonly userStatusService: UserStatusService, // Removed
     private readonly cacheService: CacheService,
     private readonly workflowBuilder: WorkflowBuilder,
   ) {
@@ -240,7 +240,7 @@ export class LangGraphService {
   }> {
     try {
       const dependencyStatus = {
-        userStatusService: !!this.userStatusService,
+        userStatusService: false, // Removed service
         cacheService: !!this.cacheService,
       };
 
@@ -459,7 +459,7 @@ export class LangGraphService {
       };
 
       // 스트리밍 콜백 설정
-      let currentStage = 'intent_analysis';
+      const currentStage = 'intent_analysis';
       const streamingCallback = options.streamingCallback || (() => Promise.resolve());
 
       // 1. 의도 분석 단계
@@ -511,7 +511,7 @@ export class LangGraphService {
     initialState: GraphState,
     streamingCallback: (chunk: any) => Promise<void>
   ): Promise<GraphState> {
-    let currentState = { ...initialState };
+    const currentState = { ...initialState };
     
     try {
       // 의도 분석

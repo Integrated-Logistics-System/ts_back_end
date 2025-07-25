@@ -6,7 +6,9 @@ import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { JwtStrategy } from './strategies/jwt.strategy';
 import { UserModule } from '../user/user.module';
-import { CacheModule } from '../cache/cache.module'; // CacheModule 추가
+import { CacheModule } from '../cache/cache.module';
+import { SessionService } from './services/session.service';
+import { TokenService } from './services/token.service';
 
 @Module({
   imports: [
@@ -22,11 +24,16 @@ import { CacheModule } from '../cache/cache.module'; // CacheModule 추가
       }),
       inject: [ConfigService],
     }),
-    UserModule, // User 모듈 import
-    CacheModule, // Cache 모듈 import (Redis 세션 관리용)
+    UserModule,
+    CacheModule,
   ],
   controllers: [AuthController],
-  providers: [AuthService, JwtStrategy],
+  providers: [
+    AuthService,
+    SessionService,
+    TokenService,
+    JwtStrategy
+  ],
   exports: [AuthService, JwtModule],
 })
 export class AuthModule {}
