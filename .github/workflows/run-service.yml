@@ -1,0 +1,45 @@
+name: Build and Run Backend Service in Runner
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  run-service:
+    runs-on: self-hosted
+    
+    # 이 작업의 기본 디렉토리를 백엔드 폴더로 설정합니다.
+    defaults:
+      run:
+        working-directory: ./ts_backend
+
+    steps:
+      # 1. 소스코드 체크아웃
+      - name: Checkout source code
+        uses: actions/checkout@v3
+        with:
+          path: ts_backend
+
+      # 2. Docker Compose로 서비스 빌드 및 실행
+      - name: Build and run services with injected secrets
+        run: |
+          # GitHub Secret(ENV_FILE_BACKEND)의 내용을 .env.production 파일로 생성합니다.
+          echo "${{ secrets.ENV_FILE_BACKEND }}" > .env.production
+
+          # docker-compose가 .env.production 파일을 자동으로 읽어 서비스를 실행합니다.
+          docker-compose build
+          docker-compose up -d
+
+      # 3. 서비스 동작 확인 (워크플로우 내에서 테스트)
+      - name: Verify service is running
+        run: |
+          echo "Waiting for the service to start..."
+          sleep 20 # 서비스가 완전히 시작될 때까지 충분히 대기
+
+          echo "Checking running containers:"
+          docker-compose ps
+
+          echo "Testing API endpoint:"
+          # docker-compose.yml에 정의된 백엔드 포트(예: 3000)로 테스트 요청
+          curl --fail http://localhost:3000/api/health-check || exit 1
