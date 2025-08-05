@@ -21,6 +21,9 @@ jobs:
           # GitHub Secret(ENV_FILE_BACKEND)의 내용을 .env.production 파일로 생성합니다.
           echo "${{ secrets.ENV_FILE_BACKEND }}" > ./.env.production
 
+          # 로그 디렉터리가 없을 경우 에러가 발생하므로 미리 생성합니다.
+          mkdir -p ./logs
+
           # Synology DSM 환경에 맞는 'docker compose' (하이픈 없음) 명령어를 사용합니다.
           docker compose build
           docker compose up -d
