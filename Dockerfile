@@ -8,13 +8,17 @@ WORKDIR /app
 COPY package*.json ./
 
 # 의존성 설치 (캐시 최적화)
-RUN npm ci --only=production && npm cache clean --force
+# nest build를 위해 devDependencies를 포함한 모든 의존성을 설치합니다.
+RUN npm ci
 
 # 소스 코드 복사
 COPY . .
 
 # TypeScript 빌드
 RUN npm run build
+
+# 최종 이미지 크기를 줄이기 위해 devDependencies를 삭제합니다.
+RUN npm prune --production
 
 # 🏃 Production 스테이지
 FROM node:20-alpine AS production
