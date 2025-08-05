@@ -17,8 +17,8 @@ jobs:
       # 2. Docker Compose로 서비스 빌드 및 실행
       - name: Build and run services
         run: |
-          # GitHub Secret(ENV_FILE_BACKEND)의 내용을 .env.production 파일로 생성합니다.
-          echo "${{ secrets.ENV_FILE_BACKEND }}" > ./ts_backend/.env.production
+          # GitHub Secret(ENV_FILE_BACKEND)의 내용을 현재 디렉터리에 .env.production 파일로 생성합니다.
+          echo "${{ secrets.ENV_FILE_BACKEND }}" > ./.env.production
 
           # docker-compose.yml이 있는 루트 디렉터리로 이동하여 실행
           # 이미지 이름은 docker-compose.yml에 정의된 로컬 이름을 사용합니다.
