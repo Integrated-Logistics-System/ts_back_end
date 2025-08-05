@@ -5,7 +5,7 @@ version: '3.8'
 services:
   # 백엔드 API 서버
   backend:
-    image: ghcr.io/${GITHUB_REPOSITORY}/backend:latest
+    image: smart-recipe-backend:latest
     container_name: ai-recipe-backend
     ports:
       - "8081:8081"  # API 포트
