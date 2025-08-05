@@ -4,6 +4,7 @@ import { ValidationPipe, Logger } from '@nestjs/common';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { IoAdapter } from '@nestjs/platform-socket.io';
 import { Server, ServerOptions } from 'socket.io';
+import { AiService } from './modules/ai/ai.service';
 
 class ConfiguredIoAdapter extends IoAdapter {
   createIOServer(port: number, options?: ServerOptions): Server {
@@ -28,8 +29,6 @@ class ConfiguredIoAdapter extends IoAdapter {
     return super.createIOServer(websocketPort, optionsWithCORS) as Server;
   }
 }
-
-import { AiService } from './ai/ai.service';
 
 async function bootstrap() {
   const logger = new Logger('Bootstrap');
