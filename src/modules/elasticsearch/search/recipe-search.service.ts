@@ -8,13 +8,7 @@ import {
   SearchResult,
   ElasticsearchResponse,
   ElasticsearchHit,
-  VectorSearchOptions,
-  VectorSearchResult,
-  VectorSearchResponse,
 } from '../types/elasticsearch.types';
-// import { QueryBuilder } from '../utils/query-builder.util'; // Removed
-// import { ResponseFormatter } from '../utils/response-formatter.util'; // Removed
-import { EmbeddingService } from '../../embedding/embedding.service';
 
 @Injectable()
 export class RecipeSearchService {
@@ -23,65 +17,261 @@ export class RecipeSearchService {
 
   constructor(
     private readonly configService: ConfigService,
-    // private readonly queryBuilder: QueryBuilder, // Removed
-    // private readonly responseFormatter: ResponseFormatter, // Removed
-    private readonly embeddingService: EmbeddingService,
     @Inject('ELASTICSEARCH_CLIENT') private readonly client: Client,
   ) {}
 
   /**
-   * 기본 레시피 검색
+   * 텍스트 기반 레시피 검색 (벡터 검색 제거됨)
    */
   async searchRecipes(query: string, options: SearchOptions = {}): Promise<SearchResult> {
     const startTime = Date.now();
+    this.logger.log(`🔍 Text-only search: "${query}"`);
     
     try {
-      // QueryBuilder와 ResponseFormatter가 제거되어 기본 검색으로 대체
-      const searchQuery = {
+      // 핵심 재료 키워드 추출
+      const ingredientKeywords = this.extractIngredientKeywords(query);
+      
+      const searchQuery: any = {
         query: {
-          multi_match: {
-            query,
-            fields: ['name^3', 'description^2', 'ingredients', 'tags'],
-            type: 'best_fields'
+          bool: {
+            must: [
+              {
+                multi_match: {
+                  query,
+                  fields: [
+                    'nameKo^4',          // 한국어 이름 최고 가중치
+                    'name^3',            // 영어 이름 
+                    'descriptionKo^3',   // 한국어 설명
+                    'description^2',     // 영어 설명
+                    'ingredientsKo^3',   // 한국어 재료 가중치 증가
+                    'ingredients^2',     // 영어 재료 가중치 증가
+                    'tagsKo^2',          // 한국어 태그
+                    'tags'               // 영어 태그
+                  ],
+                  type: 'best_fields',
+                  fuzziness: 'AUTO'
+                }
+              }
+            ],
+            // 핵심 재료가 있으면 boost 적용
+            should: ingredientKeywords.length > 0 ? [
+              {
+                terms: {
+                  'ingredientsKo': ingredientKeywords,
+                  boost: 3.0
+                }
+              },
+              {
+                terms: {
+                  'ingredients': ingredientKeywords.map(k => this.translateToEnglish(k)),
+                  boost: 2.0
+                }
+              }
+            ] : []
           }
         },
         size: options.limit || 10,
-        from: ((options.page || 1) - 1) * (options.limit || 10)
+        _source: [
+          'name', 'nameKo', 'description', 'descriptionKo',
+          'ingredients', 'ingredientsKo', 'steps', 'stepsKo',
+          'minutes', 'servings', 'difficulty', 'tags', 'tagsKo'
+        ]
       };
-      
-      const response = await this.executeSearch(searchQuery);
-      const recipes = response.hits.hits.map(hit => this.formatBasicResult(hit));
+
+      // 알레르기 필터 추가
+      if (options.allergies && options.allergies.length > 0) {
+        searchQuery.query.bool.must_not = [
+          {
+            terms: {
+              'ingredients.keyword': options.allergies
+            }
+          }
+        ];
+      }
+
+      // 최대 조리 시간 필터
+      if (options.maxCookingTime) {
+        searchQuery.query.bool.filter = [
+          {
+            range: {
+              minutes: { lte: options.maxCookingTime }
+            }
+          }
+        ];
+      }
+
+      const response = await this.client.search({
+        index: this.indexName,
+        body: searchQuery,
+      });
+
       const searchTime = Date.now() - startTime;
+      
+      // 🔍 디버깅: Elasticsearch 원본 응답 확인
+      this.logger.debug(`📊 Elasticsearch 원본 응답 - hits.total: ${typeof response.hits.total === 'number' ? response.hits.total : response.hits.total?.value}, hits.hits.length: ${response.hits.hits.length}`);
+      
+      const recipes = this.formatSearchResults(response.hits.hits);
+
+      this.logger.log(`✅ Found ${recipes.length} recipes in ${searchTime}ms`);
+
+      // 📊 Elasticsearch 검색 결과 상세 로그
+      if (recipes.length > 0) {
+        this.logger.log(`🔍 Elasticsearch 검색 결과 ("${query}"):`);
+        recipes.forEach((recipe, index) => {
+          this.logger.log(`  ${index + 1}. ${recipe.nameKo || recipe.name || 'Unknown'} (${recipe.minutes || 0}분, ${recipe.difficulty || '보통'})`);
+        });
+      } else {
+        this.logger.warn(`⚠️ Elasticsearch에서 "${query}"에 대한 레시피를 찾지 못했습니다!`);
+      }
+
+      const total = typeof response.hits.total === 'number' 
+        ? response.hits.total 
+        : response.hits.total?.value || 0;
 
       return {
         recipes,
-        total: response.hits.total.value,
-        page: options.page || 1,
+        total,
+        page: 1,
         limit: options.limit || 10,
-        hasMore: this.hasMoreResults(response, options),
+        hasMore: false,
         searchTime,
-        aggregations: response.aggregations,
       };
 
     } catch (error) {
-      this.logger.error('Recipe search failed:', error);
-      throw error;
+      this.logger.error('Text search failed:', error);
+      throw new Error(`레시피 검색 실패: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   }
 
   /**
-   * 고급 레시피 검색
+   * 검색 결과 포맷팅
+   */
+  private formatSearchResults(hits: any[]): ElasticsearchRecipe[] {
+    this.logger.debug(`🔧 formatSearchResults 호출됨 - hits 개수: ${hits.length}`);
+    
+    if (hits.length === 0) {
+      this.logger.warn(`⚠️ formatSearchResults: hits 배열이 비어있음`);
+      return [];
+    }
+    
+    return hits.map((hit, index) => {
+      const source = hit._source;
+      
+      this.logger.debug(`🔧 Processing hit ${index + 1}: id=${hit._id}, nameKo=${source?.nameKo}, name=${source?.name}`);
+      
+      return {
+        id: hit._id,
+        // 한글 우선, 없으면 영어, 없으면 원본
+        name: source?.nameKo || source?.name || source?.nameEn || '',
+        nameKo: source?.nameKo || '',
+        nameEn: source?.nameEn || source?.name || '',
+        description: source?.descriptionKo || source?.description || source?.descriptionEn || '',
+        descriptionKo: source?.descriptionKo || '',
+        descriptionEn: source?.descriptionEn || source?.description || '',
+        // 재료는 한글 배열 우선
+        ingredients: source?.ingredientsKo && source.ingredientsKo.length > 0 
+          ? source.ingredientsKo 
+          : source?.ingredients || [],
+        ingredientsKo: source?.ingredientsKo || [],
+        ingredientsEn: source?.ingredientsEn || source?.ingredients || [],
+        // 조리법은 한글 배열 우선
+        steps: source?.stepsKo && source.stepsKo.length > 0 
+          ? source.stepsKo 
+          : source?.steps || [],
+        stepsKo: source?.stepsKo || [],
+        stepsEn: source?.stepsEn || source?.steps || [],
+        difficulty: this.getDifficultyInKorean(source?.difficulty) || '보통',
+        // 태그는 한글 배열 우선  
+        tags: source?.tagsKo && source.tagsKo.length > 0 
+          ? source.tagsKo 
+          : source?.tags || [],
+        tagsKo: source?.tagsKo || [],
+        tagsEn: source?.tagsEn || source?.tags || [],
+        minutes: source?.minutes || 0,
+        nSteps: source?.nSteps || 0,
+        nIngredients: source?.nIngredients || 0,
+        // 기타 필드들
+        servings: source?.servings,
+        source: source?.source,
+        viewCount: source?.viewCount,
+        likeCount: source?.likeCount,
+        bookmarkCount: source?.bookmarkCount,
+        averageRating: source?.averageRating,
+        ratingCount: source?.ratingCount,
+        isBookmarked: source?.isBookmarked,
+        userRating: source?.userRating,
+        personalNote: source?.personalNote,
+        personalTags: source?.personalTags,
+        cookCount: source?.cookCount,
+        lastCookedAt: source?.lastCookedAt ? new Date(source.lastCookedAt) : undefined,
+        allergenInfo: source?.allergenInfo,
+        allergyRisk: source?.allergyRisk,
+        allergies: source?.allergies,
+        isSafeForAllergies: source?.isSafeForAllergies,
+        safetyScore: source?.safetyScore,
+        createdAt: source?.createdAt,
+        updatedAt: source?.updatedAt,
+        isAiGenerated: source?.isAiGenerated,
+        generationTimestamp: source?.generationTimestamp,
+      };
+    });
+  }
+
+  /**
+   * 인기 검색어 조회
+   */
+  async getPopularQueries(limit: number = 10): Promise<string[]> {
+    try {
+      // 실제 구현에서는 검색 로그를 분석하여 인기 검색어를 반환
+      // 현재는 하드코딩된 예시
+      return [
+        '닭가슴살',
+        '파스타',
+        '샐러드',
+        '볶음밥',
+        '스테이크',
+        '수프',
+        '김치찌개',
+        '된장찌개',
+        '비빔밥',
+        '떡볶이'
+      ].slice(0, limit);
+    } catch (error) {
+      this.logger.error('Failed to get popular queries:', error);
+      return [];
+    }
+  }
+
+  /**
+   * 검색 통계 조회
+   */
+  async getSearchStats(): Promise<any> {
+    try {
+      const response = await this.client.count({
+        index: this.indexName,
+      });
+
+      return {
+        totalRecipes: response.count || 0,
+        indexName: this.indexName,
+        searchMethod: 'text_only', // 벡터 검색 제거됨
+      };
+    } catch (error) {
+      this.logger.error('Failed to get search stats:', error);
+      return {
+        totalRecipes: 0,
+        indexName: this.indexName,
+        searchMethod: 'text_only',
+      };
+    }
+  }
+
+  /**
+   * 고급 레시피 검색 (텍스트 기반)
    */
   async advancedSearch(query: string, options: AdvancedSearchOptions): Promise<SearchResult> {
-    const startTime = Date.now();
-    
-    try {
-      // 기본 검색으로 대체 (고급 기능 제거됨)
-      return await this.searchRecipes(query, options);
-    } catch (error) {
-      this.logger.error('Advanced search failed:', error);
-      throw error;
-    }
+    // Advanced search는 기본 검색과 동일하게 처리 (벡터 검색 제거됨)
+    return this.searchRecipes(query, options);
   }
 
   /**
@@ -89,10 +279,42 @@ export class RecipeSearchService {
    */
   async getRecipeById(id: string): Promise<ElasticsearchRecipe | null> {
     try {
-      const response = await this.executeGet(id);
-      return response ? this.formatSingleResult(response) : null;
+      const response = await this.client.get({
+        index: this.indexName,
+        id: id,
+      });
+      
+      const source = response._source as any;
+      return {
+        id: response._id,
+        // 한글 우선 처리
+        name: source?.nameKo || source?.name || source?.nameEn || '',
+        nameKo: source?.nameKo || '',
+        nameEn: source?.nameEn || source?.name || '',
+        description: source?.descriptionKo || source?.description || source?.descriptionEn || '',
+        descriptionKo: source?.descriptionKo || '',
+        descriptionEn: source?.descriptionEn || source?.description || '',
+        ingredients: source?.ingredientsKo && source.ingredientsKo.length > 0 
+          ? source.ingredientsKo 
+          : source?.ingredients || [],
+        ingredientsKo: source?.ingredientsKo || [],
+        ingredientsEn: source?.ingredientsEn || source?.ingredients || [],
+        steps: source?.stepsKo && source.stepsKo.length > 0 
+          ? source.stepsKo 
+          : source?.steps || [],
+        stepsKo: source?.stepsKo || [],
+        stepsEn: source?.stepsEn || source?.steps || [],
+        difficulty: this.getDifficultyInKorean(source?.difficulty) || '보통',
+        tags: source?.tagsKo && source.tagsKo.length > 0 
+          ? source.tagsKo 
+          : source?.tags || [],
+        tagsKo: source?.tagsKo || [],
+        tagsEn: source?.tagsEn || source?.tags || [],
+        // 나머지 필드들
+        ...source,
+      };
     } catch (error) {
-      this.logger.error(`Failed to get recipe by ID ${id}:`, error);
+      this.logger.warn(`Recipe not found: ${id}`);
       return null;
     }
   }
@@ -101,484 +323,281 @@ export class RecipeSearchService {
    * 다중 ID로 레시피 조회
    */
   async getRecipesByIds(ids: string[]): Promise<ElasticsearchRecipe[]> {
-    if (!ids.length) return [];
-
     try {
-      const query = {
-        query: {
-          terms: { _id: ids }
-        },
-        size: ids.length
-      };
-      const response = await this.executeSearch(query);
-      return response.hits.hits.map(hit => this.formatBasicResult(hit));
+      const response = await this.client.mget({
+        index: this.indexName,
+        body: {
+          ids: ids
+        }
+      });
+
+      return response.docs
+        .filter((doc: any) => doc.found)
+        .map((doc: any) => {
+          const source = doc._source as any;
+          return {
+            id: doc._id,
+            // 한글 우선 처리
+            name: source?.nameKo || source?.name || source?.nameEn || '',
+            nameKo: source?.nameKo || '',
+            nameEn: source?.nameEn || source?.name || '',
+            description: source?.descriptionKo || source?.description || source?.descriptionEn || '',
+            descriptionKo: source?.descriptionKo || '',
+            descriptionEn: source?.descriptionEn || source?.description || '',
+            ingredients: source?.ingredientsKo && source.ingredientsKo.length > 0 
+              ? source.ingredientsKo 
+              : source?.ingredients || [],
+            ingredientsKo: source?.ingredientsKo || [],
+            ingredientsEn: source?.ingredientsEn || source?.ingredients || [],
+            steps: source?.stepsKo && source.stepsKo.length > 0 
+              ? source.stepsKo 
+              : source?.steps || [],
+            stepsKo: source?.stepsKo || [],
+            stepsEn: source?.stepsEn || source?.steps || [],
+            difficulty: this.getDifficultyInKorean(source?.difficulty) || '보통',
+            tags: source?.tagsKo && source.tagsKo.length > 0 
+              ? source.tagsKo 
+              : source?.tags || [],
+            tagsKo: source?.tagsKo || [],
+            tagsEn: source?.tagsEn || source?.tags || [],
+            // 나머지 필드들
+            ...source,
+          };
+        });
     } catch (error) {
-      this.logger.error('Failed to get recipes by IDs:', error);
+      this.logger.error(`Failed to get recipes by IDs: ${error}`);
       return [];
     }
   }
 
   /**
-   * 유사한 레시피 검색
+   * 유사한 레시피 검색 (텍스트 기반)
    */
   async getSimilarRecipes(
     recipeId: string, 
-    limit: number = 5,
+    limit: number = 5, 
     options: SearchOptions = {}
   ): Promise<ElasticsearchRecipe[]> {
     try {
-      const baseRecipe = await this.getRecipeById(recipeId);
-      if (!baseRecipe) {
-        this.logger.warn(`Base recipe not found: ${recipeId}`);
+      // 원본 레시피 조회
+      const originalRecipe = await this.getRecipeById(recipeId);
+      if (!originalRecipe) {
         return [];
       }
 
-      // 기본 유사도 검색 (태그 기반)
-      const query = {
-        query: {
-          bool: {
-            should: [
-              { terms: { tags: baseRecipe.tags } },
-              { match: { difficulty: baseRecipe.difficulty } }
-            ],
-            must_not: [
-              { term: { _id: recipeId } }
-            ]
-          }
-        },
-        size: limit
-      };
+      // 레시피 이름으로 유사한 레시피 검색
+      const searchQuery = originalRecipe.nameKo || originalRecipe.name || '';
+      const result = await this.searchRecipes(searchQuery, { ...options, limit });
       
-      const response = await this.executeSearch(query);
-      return response.hits.hits.map(hit => this.formatBasicResult(hit));
-
+      // 원본 레시피 제외
+      return result.recipes.filter(recipe => recipe.id !== recipeId);
     } catch (error) {
-      this.logger.error('Failed to get similar recipes:', error);
+      this.logger.error(`Failed to get similar recipes: ${error}`);
       return [];
     }
   }
 
   /**
-   * 추천 레시피 (개인화)
+   * 추천 레시피 조회 (텍스트 기반)
    */
   async getRecommendedRecipes(
     userId: string,
-    userPreferences: string[] = [],
-    userAllergies: string[] = [],
+    userPreferences: string[],
+    userAllergies: string[],
     limit: number = 10
   ): Promise<ElasticsearchRecipe[]> {
     try {
-      // 기본 추천 로직 (선호도 기반)
-      const query = {
-        query: {
-          bool: {
-            should: userPreferences.map(pref => ({ match: { tags: pref } })),
-            must_not: userAllergies.map(allergy => ({ term: { 'allergenInfo.allergens': allergy } }))
-          }
-        },
-        sort: [{ rating: { order: 'desc' } }],
-        size: limit
-      };
+      // 사용자 선호도 기반 검색
+      const preferenceQuery = userPreferences.join(' ');
+      const result = await this.searchRecipes(preferenceQuery, {
+        limit,
+        allergies: userAllergies
+      });
       
-      const response = await this.executeSearch(query);
-      return response.hits.hits.map(hit => this.formatBasicResult(hit));
-
+      return result.recipes;
     } catch (error) {
-      this.logger.error('Failed to get recommended recipes:', error);
+      this.logger.error(`Failed to get recommended recipes: ${error}`);
       return [];
     }
   }
 
   /**
-   * 레시피 검색 자동완성
+   * 검색 제안어 조회
    */
   async getSearchSuggestions(query: string, limit: number = 5): Promise<string[]> {
     try {
-      // 기본 자동완성 (레시피 이름 매칭)
-      const response = await this.executeSearch({
-        query: {
-          match_phrase_prefix: {
-            name: { query, max_expansions: limit }
+      const response = await this.client.search({
+        index: this.indexName,
+        body: {
+          suggest: {
+            recipe_suggest: {
+              prefix: query,
+              completion: {
+                field: 'nameKo.suggest',
+                size: limit
+              }
+            }
           }
-        },
-        size: limit,
-        _source: ['name']
+        }
       });
-      
-      return response.hits.hits.map(hit => hit._source.name).filter(Boolean);
+
+      const suggestions = response.suggest?.recipe_suggest?.[0]?.options;
+      if (Array.isArray(suggestions)) {
+        return suggestions.map((option: any) => option.text);
+      }
+      return [];
     } catch (error) {
-      this.logger.error('Failed to get search suggestions:', error);
+      this.logger.error(`Failed to get search suggestions: ${error}`);
       return [];
     }
   }
 
   /**
-   * 카테고리별 인기 레시피
+   * 카테고리별 인기 레시피 조회
    */
-  async getPopularRecipesByCategory(
-    category: string,
-    limit: number = 10
-  ): Promise<ElasticsearchRecipe[]> {
+  async getPopularRecipesByCategory(category: string, limit: number = 10): Promise<ElasticsearchRecipe[]> {
     try {
-      const query = {
-        query: {
-          match: { tags: category }
-        },
-        sort: [{ rating: { order: 'desc' } }],
-        size: limit
-      };
-      const response = await this.executeSearch(query);
-      return response.hits.hits.map(hit => this.formatBasicResult(hit));
+      const result = await this.searchRecipes(category, { limit });
+      return result.recipes;
     } catch (error) {
-      this.logger.error('Failed to get popular recipes by category:', error);
+      this.logger.error(`Failed to get popular recipes by category: ${error}`);
       return [];
     }
   }
 
   /**
-   * 최근 추가된 레시피
+   * 최신 레시피 조회
    */
   async getRecentRecipes(limit: number = 10): Promise<ElasticsearchRecipe[]> {
     try {
-      const query = {
-        query: { match_all: {} },
-        sort: [{ createdAt: { order: 'desc' } }],
-        size: limit
-      };
-      const response = await this.executeSearch(query);
-      return response.hits.hits.map(hit => this.formatBasicResult(hit));
+      const response = await this.client.search({
+        index: this.indexName,
+        body: {
+          sort: [
+            { createdAt: { order: 'desc' } }
+          ],
+          size: limit
+        }
+      });
+
+      return this.formatSearchResults(response.hits.hits);
     } catch (error) {
-      this.logger.error('Failed to get recent recipes:', error);
+      this.logger.error(`Failed to get recent recipes: ${error}`);
       return [];
     }
   }
 
   /**
-   * 평점 높은 레시피
+   * 평점 높은 레시피 조회
    */
   async getTopRatedRecipes(limit: number = 10): Promise<ElasticsearchRecipe[]> {
     try {
-      const query = {
-        query: { match_all: {} },
-        sort: [{ rating: { order: 'desc' } }],
-        size: limit
-      };
-      const response = await this.executeSearch(query);
-      return response.hits.hits.map(hit => this.formatBasicResult(hit));
+      const response = await this.client.search({
+        index: this.indexName,
+        body: {
+          sort: [
+            { averageRating: { order: 'desc' } }
+          ],
+          size: limit
+        }
+      });
+
+      return this.formatSearchResults(response.hits.hits);
     } catch (error) {
-      this.logger.error('Failed to get top rated recipes:', error);
+      this.logger.error(`Failed to get top rated recipes: ${error}`);
       return [];
     }
   }
 
   /**
-   * 벡터 검색 (의미적 유사도 기반)
-   * 768차원 granite-embedding 벡터를 사용한 유사도 검색
+   * 쿼리에서 핵심 재료 키워드 추출
    */
-  async vectorSearch(options: VectorSearchOptions): Promise<VectorSearchResponse> {
-    const startTime = Date.now();
+  private extractIngredientKeywords(query: string): string[] {
+    const ingredientMap: { [key: string]: string } = {
+      '닭가슴살': '닭가슴살',
+      '닭고기': '닭고기', 
+      '돼지고기': '돼지고기',
+      '소고기': '소고기',
+      '감자': '감자',
+      '양파': '양파',
+      '마늘': '마늘',
+      '당근': '당근',
+      '브로콜리': '브로콜리',
+      '시금치': '시금치',
+      '버섯': '버섯',
+      '두부': '두부',
+      '계란': '계란',
+      '새우': '새우',
+      '연어': '연어',
+      '참치': '참치'
+    };
+
+    const extractedIngredients: string[] = [];
+    for (const [korean, ingredient] of Object.entries(ingredientMap)) {
+      if (query.includes(korean)) {
+        extractedIngredients.push(ingredient);
+      }
+    }
+
+    return extractedIngredients;
+  }
+
+  /**
+   * 한국어 재료를 영어로 번역
+   */
+  private translateToEnglish(koreanIngredient: string): string {
+    const translationMap: { [key: string]: string } = {
+      '닭가슴살': 'chicken breast',
+      '닭고기': 'chicken',
+      '돼지고기': 'pork',
+      '소고기': 'beef',
+      '감자': 'potato',
+      '양파': 'onion',
+      '마늘': 'garlic',
+      '당근': 'carrot',
+      '브로콜리': 'broccoli',
+      '시금치': 'spinach',
+      '버섯': 'mushroom',
+      '두부': 'tofu',
+      '계란': 'egg',
+      '새우': 'shrimp',
+      '연어': 'salmon',
+      '참치': 'tuna'
+    };
+
+    return translationMap[koreanIngredient] || koreanIngredient;
+  }
+
+  /**
+   * 난이도를 한국어로 변환
+   */
+  private getDifficultyInKorean(difficulty: string): string {
+    if (!difficulty) return '보통';
     
-    try {
-      this.logger.log(`🔍 Vector search for query: "${options.query}"`);
-      
-      // 기본값 설정
-      const k = options.k || 10;
-      const vectorWeight = options.vectorWeight || 0.6;
-      const textWeight = options.textWeight || 0.4;
-      const useHybridSearch = options.useHybridSearch !== false;
-      const minScore = options.minScore || 0.1;
-
-      // 쿼리 임베딩 생성
-      const embeddingStartTime = Date.now();
-      const queryEmbedding = await this.generateQueryEmbedding(options.query);
-      const embeddingTime = Date.now() - embeddingStartTime;
-      
-      this.logger.log(`🧠 Query embedding generated in ${embeddingTime}ms`);
-
-      // 검색 쿼리 구성
-      const searchQuery = this.buildVectorSearchQuery(
-        queryEmbedding,
-        options,
-        k,
-        vectorWeight,
-        textWeight,
-        useHybridSearch,
-        minScore
-      );
-
-      // Elasticsearch 실행
-      const esStartTime = Date.now();
-      const response = await this.executeSearch(searchQuery);
-      const esTime = Date.now() - esStartTime;
-
-      // 결과 포맷팅
-      const results = this.formatVectorSearchResults(response, vectorWeight, textWeight);
-      const totalTime = Date.now() - startTime;
-
-      this.logger.log(`✅ Vector search completed: ${results.length} results in ${totalTime}ms`);
-
-      return {
-        results,
-        total: response.hits.total.value,
-        maxScore: response.hits.hits.length > 0 ? Math.max(...response.hits.hits.map(hit => hit._score || 0)) : 0,
-        searchTime: totalTime,
-        searchMethod: useHybridSearch ? 'hybrid' : 'vector',
-        metadata: {
-          vectorWeight,
-          textWeight,
-          queryEmbeddingTime: embeddingTime,
-          elasticsearchTime: esTime,
-          k,
-        },
-      };
-
-    } catch (error) {
-      this.logger.error('Vector search failed:', error);
-      throw new Error(`Vector search failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
-    }
-  }
-
-  // ==================== Private Helper Methods ====================
-
-  private async executeSearch(query: object): Promise<ElasticsearchResponse<ElasticsearchRecipe>> {
-    try {
-      const response = await this.client.search({
-        index: this.indexName,
-        ...query,
-      });
-      
-      return response as ElasticsearchResponse<ElasticsearchRecipe>;
-    } catch (error) {
-      this.logger.error('Elasticsearch search failed:', error);
-      throw new Error(`Elasticsearch search failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
-    }
-  }
-
-  private async executeGet(id: string): Promise<ElasticsearchHit<ElasticsearchRecipe> | null> {
-    try {
-      const response = await this.client.get({
-        index: this.indexName,
-        id: id,
-      });
-      
-      return response as ElasticsearchHit<ElasticsearchRecipe>;
-    } catch (error) {
-      if ((error as any).statusCode === 404) {
-        return null;
-      }
-      this.logger.error('Elasticsearch get failed:', error);
-      throw new Error(`Elasticsearch get failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
-    }
-  }
-
-  private async executeSuggest(query: object): Promise<any> {
-    try {
-      const response = await this.client.search({
-        index: this.indexName,
-        ...query,
-      });
-      
-      return response.suggest || {};
-    } catch (error) {
-      this.logger.error('Elasticsearch suggest failed:', error);
-      throw new Error(`Elasticsearch suggest failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
-    }
-  }
-
-  private hasMoreResults(response: ElasticsearchResponse<any>, options: SearchOptions): boolean {
-    const page = options.page || 1;
-    const limit = options.limit || 10;
-    const totalResults = response.hits.total.value;
+    const difficultyLower = difficulty.toLowerCase();
     
-    return (page * limit) < totalResults;
-  }
-
-  // ==================== Vector Search Helper Methods ====================
-
-  /**
-   * 쿼리 임베딩 생성 (EmbeddingService 사용)
-   */
-  private async generateQueryEmbedding(query: string): Promise<number[]> {
-    try {
-      // 실제 EmbeddingService를 사용하여 쿼리 임베딩 생성
-      const embedding = await this.embeddingService.embedQuery(query);
-      
-      this.logger.log(`🧠 Generated ${embedding.length}-dimensional embedding for query`);
-      return embedding;
-      
-    } catch (error) {
-      this.logger.error('Failed to generate query embedding:', error);
-      throw new Error('Query embedding generation failed');
+    // 이미 한국어인 경우 그대로 반환
+    if (difficultyLower.includes('쉬움') || difficultyLower.includes('초급') || difficultyLower.includes('간단')) {
+      return '쉬움';
     }
-  }
-
-  /**
-   * 벡터 검색 쿼리 구성
-   */
-  private buildVectorSearchQuery(
-    queryEmbedding: number[],
-    options: VectorSearchOptions,
-    k: number,
-    vectorWeight: number,
-    textWeight: number,
-    useHybridSearch: boolean,
-    minScore: number
-  ): object {
-    const vectorQuery = {
-      script_score: {
-        query: {
-          bool: {
-            filter: [
-              { exists: { field: 'embedding' } },
-              // 알레르기 필터
-              ...(options.allergies && options.allergies.length > 0
-                ? [{
-                    bool: {
-                      must_not: options.allergies.map(allergy => ({
-                        term: { 'allergies.keyword': allergy }
-                      }))
-                    }
-                  }]
-                : [])
-            ]
-          }
-        },
-        script: {
-          source: `cosineSimilarity(params.query_vector, 'embedding') + 1.0`,
-          params: {
-            query_vector: queryEmbedding
-          }
-        },
-        min_score: minScore
-      }
-    };
-
-    if (!useHybridSearch) {
-      return {
-        size: k,
-        query: vectorQuery,
-        _source: {
-          excludes: ['embedding'] // 응답에서 임베딩 벡터 제외
-        }
-      };
+    if (difficultyLower.includes('어려움') || difficultyLower.includes('고급') || difficultyLower.includes('복잡')) {
+      return '어려움';
     }
-
-    // 하이브리드 검색 (벡터 + 텍스트) - 한글 필드 우선
-    const textQuery = {
-      bool: {
-        should: [
-          { match: { nameKo: { query: options.query, boost: 3.0 } } },
-          { match: { name: { query: options.query, boost: 1.5 } } },
-          { match: { descriptionKo: { query: options.query, boost: 2.0 } } },
-          { match: { description: { query: options.query, boost: 1.0 } } },
-          { match: { ingredientsKo: { query: options.query, boost: 1.8 } } },
-          { match: { ingredients: { query: options.query, boost: 1.0 } } },
-          { match: { tagsKo: { query: options.query, boost: 1.5 } } },
-          { match: { tags: { query: options.query, boost: 0.8 } } }
-        ]
-      }
-    };
-
-    return {
-      size: k,
-      query: {
-        bool: {
-          should: [
-            {
-              constant_score: {
-                query: vectorQuery,
-                boost: vectorWeight
-              }
-            },
-            {
-              constant_score: {
-                query: textQuery,
-                boost: textWeight
-              }
-            }
-          ],
-          filter: [
-            ...(options.allergies && options.allergies.length > 0
-              ? [{
-                  bool: {
-                    must_not: options.allergies.map(allergy => ({
-                      term: { 'allergies.keyword': allergy }
-                    }))
-                  }
-                }]
-              : [])
-          ]
-        }
-      },
-      _source: {
-        excludes: ['embedding'] // 응답에서 임베딩 벡터 제외
-      }
-    };
-  }
-
-  /**
-   * 벡터 검색 결과 포맷팅
-   */
-  private formatVectorSearchResults(
-    response: ElasticsearchResponse<ElasticsearchRecipe>,
-    vectorWeight: number,
-    textWeight: number
-  ): VectorSearchResult[] {
-    return response.hits.hits.map(hit => {
-      const recipe = hit._source as ElasticsearchRecipe;
-      
-      return {
-        ...recipe,
-        id: hit._id,
-        _score: hit._score || 0,
-        vectorSimilarity: hit._score ? hit._score * vectorWeight : undefined,
-        textRelevance: hit._score ? hit._score * textWeight : undefined,
-        combinedScore: hit._score || 0,
-        searchMethod: vectorWeight > 0 && textWeight > 0 ? 'hybrid' : 'vector'
-      } as VectorSearchResult;
-    });
-  }
-
-  // ==================== Format Helper Methods ====================
-
-  /**
-   * 기본 검색 결과 포맷팅
-   */
-  private formatBasicResult(hit: any): ElasticsearchRecipe {
-    const source = hit._source;
-    return {
-      id: hit._id,
-      name: source.name || '',
-      nameKo: source.nameKo || source.name || '',
-      nameEn: source.nameEn || source.name || '',
-      description: source.description || '',
-      descriptionKo: source.descriptionKo || source.description || '',
-      descriptionEn: source.descriptionEn || source.description || '',
-      ingredients: Array.isArray(source.ingredients) ? source.ingredients : [],
-      ingredientsKo: Array.isArray(source.ingredientsKo) ? source.ingredientsKo : Array.isArray(source.ingredients) ? source.ingredients : [],
-      ingredientsEn: Array.isArray(source.ingredientsEn) ? source.ingredientsEn : Array.isArray(source.ingredients) ? source.ingredients : [],
-      steps: Array.isArray(source.steps) ? source.steps : [],
-      stepsKo: Array.isArray(source.stepsKo) ? source.stepsKo : Array.isArray(source.steps) ? source.steps : [],
-      stepsEn: Array.isArray(source.stepsEn) ? source.stepsEn : Array.isArray(source.steps) ? source.steps : [],
-      difficulty: source.difficulty || 'medium',
-      tags: Array.isArray(source.tags) ? source.tags : [],
-      tagsKo: Array.isArray(source.tagsKo) ? source.tagsKo : Array.isArray(source.tags) ? source.tags : [],
-      tagsEn: Array.isArray(source.tagsEn) ? source.tagsEn : Array.isArray(source.tags) ? source.tags : [],
-      minutes: source.minutes || 30,
-      nSteps: source.nSteps || 0,
-      nIngredients: source.nIngredients || 0,
-      servings: source.servings || 4,
-      isAiGenerated: source.isAiGenerated || false,
-      allergenInfo: source.allergenInfo || null,
-      createdAt: source.createdAt || new Date().toISOString(),
-      updatedAt: source.updatedAt || new Date().toISOString(),
-    };
-  }
-
-  /**
-   * 단일 결과 포맷팅
-   */
-  private formatSingleResult(hit: any): ElasticsearchRecipe {
-    return this.formatBasicResult(hit);
+    if (difficultyLower.includes('보통') || difficultyLower.includes('중급')) {
+      return '보통';
+    }
+    
+    // 영어를 한국어로 변환
+    if (difficultyLower.includes('easy') || difficultyLower.includes('beginner')) {
+      return '쉬움';
+    }
+    if (difficultyLower.includes('hard') || difficultyLower.includes('difficult') || difficultyLower.includes('advanced')) {
+      return '어려움';
+    }
+    if (difficultyLower.includes('medium') || difficultyLower.includes('intermediate')) {
+      return '보통';
+    }
+    
+    return '보통'; // 기본값
   }
 }

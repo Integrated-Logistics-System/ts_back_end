@@ -11,7 +11,7 @@ import {
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
 import { RecipeService } from './recipe.service';
-import { SearchRecipeDto, RateRecipeDto, AddPersonalNoteDto } from './dto/recipe.dto';
+import { SearchRecipeDto } from './dto/recipe.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { Public } from '../auth/decorators/public.decorator';
 import { ServiceResponse } from '../../shared/interfaces/common.interface';
@@ -141,55 +141,6 @@ export class RecipeController {
     }
   }
 
-  @Get('stats')
-  @Public()
-  @ApiOperation({ summary: 'Get recipe statistics' })
-  @ApiResponse({ status: 200, description: 'Stats retrieved successfully' })
-  async getStats(): Promise<ServiceResponse<{ [key: string]: unknown }>> {
-    try {
-      const stats = await this.recipeService.getRecipeStats();
-      return {
-        success: true,
-        data: stats
-      };
-    } catch (error: unknown) {
-      this.logger.error(`Stats error:`, error instanceof Error ? error.message : 'Unknown error');
-      return {
-        success: false,
-        error: 'Failed to get stats',
-        data: {}
-      };
-    }
-  }
-
-  @Get('bookmarks')
-  @UseGuards(JwtAuthGuard)
-  @ApiBearerAuth()
-  @ApiOperation({ summary: 'Get user bookmarks' })
-  @ApiResponse({ status: 200, description: 'Bookmarks retrieved successfully' })
-  @ApiResponse({ status: 401, description: 'Unauthorized' })
-  async getUserBookmarks(
-      @Request() req: { user: { id: string; }; },
-      @Query('page') page: number = 1,
-      @Query('limit') limit: number = 10
-  ): Promise<ServiceResponse<{ recipes: ElasticsearchRecipe[]; total: number; }>> {
-    try {
-      const userId = req.user.id;
-      const result = await this.recipeService.getUserBookmarks(userId, page, limit);
-
-      return {
-        success: true,
-        data: result
-      };
-    } catch (error: unknown) {
-      this.logger.error(`Bookmarks error:`, error instanceof Error ? error.message : 'Unknown error');
-      return {
-        success: false,
-        error: 'Failed to get bookmarks',
-        data: { recipes: [], total: 0 }
-      };
-    }
-  }
 
   @Get(':id')
   @Public()
@@ -243,113 +194,4 @@ export class RecipeController {
     }
   }
 
-  @Post(':id/bookmark')
-  @UseGuards(JwtAuthGuard)
-  @ApiBearerAuth()
-  @ApiOperation({ summary: 'Bookmark/unbookmark a recipe' })
-  @ApiResponse({ status: 200, description: 'Recipe bookmark status updated' })
-  @ApiResponse({ status: 401, description: 'Unauthorized' })
-  async toggleBookmark(
-      @Param('id') id: string,
-      @Request() req: { user: { id: string; }; }
-  ): Promise<ServiceResponse<{ bookmarked: boolean; message: string; bookmarkCount?: number; }>> {
-    try {
-      const userId = req.user.id;
-      const result = await this.recipeService.toggleBookmark(id, userId);
-
-      return {
-        success: true,
-        data: result
-      };
-    } catch (error: unknown) {
-      this.logger.error(`Toggle bookmark error for ID ${id}:`, error instanceof Error ? error.message : 'Unknown error');
-      return {
-        success: false,
-        error: 'Failed to toggle bookmark'
-      };
-    }
-  }
-
-  @Post(':id/rate')
-  @UseGuards(JwtAuthGuard)
-  @ApiBearerAuth()
-  @ApiOperation({ summary: 'Rate a recipe' })
-  @ApiResponse({ status: 200, description: 'Recipe rated successfully' })
-  @ApiResponse({ status: 401, description: 'Unauthorized' })
-  async rateRecipe(
-      @Param('id') id: string,
-      @Body() rateDto: RateRecipeDto,
-      @Request() req: { user: { id: string; }; }
-  ): Promise<ServiceResponse<{ success: boolean; userRating: number; averageRating: number; ratingCount: number; previousRating?: number; }>> {
-    try {
-      const userId = req.user.id;
-      const result = await this.recipeService.rateRecipe(id, userId, rateDto.rating);
-
-      return {
-        success: true,
-        data: result
-      };
-    } catch (error: unknown) {
-      this.logger.error(`Rate recipe error for ID ${id}:`, error instanceof Error ? error.message : 'Unknown error');
-      return {
-        success: false,
-        error: (error instanceof Error ? error.message : 'Unknown error') || 'Failed to rate recipe'
-      };
-    }
-  }
-
-  @Post(':id/note')
-  @UseGuards(JwtAuthGuard)
-  @ApiBearerAuth()
-  @ApiOperation({ summary: 'Add personal note to recipe' })
-  @ApiResponse({ status: 200, description: 'Personal note added successfully' })
-  @ApiResponse({ status: 401, description: 'Unauthorized' })
-  async addPersonalNote(
-      @Param('id') id: string,
-      @Body() noteDto: AddPersonalNoteDto,
-      @Request() req: { user: { id: string; }; }
-  ): Promise<ServiceResponse<{ success: boolean; message: string; note: string; }>> {
-    try {
-      const userId = req.user.id;
-      const result = await this.recipeService.addPersonalNote(id, userId, noteDto.note);
-
-      return {
-        success: true,
-        data: result
-      };
-    } catch (error: unknown) {
-      this.logger.error(`Add note error for ID ${id}:`, error instanceof Error ? error.message : 'Unknown error');
-      return {
-        success: false,
-        error: 'Failed to add personal note'
-      };
-    }
-  }
-
-  @Post(':id/cooked')
-  @UseGuards(JwtAuthGuard)
-  @ApiBearerAuth()
-  @ApiOperation({ summary: 'Mark recipe as cooked' })
-  @ApiResponse({ status: 200, description: 'Recipe marked as cooked' })
-  @ApiResponse({ status: 401, description: 'Unauthorized' })
-  async markAsCooked(
-      @Param('id') id: string,
-      @Request() req: { user: { id: string; }; }
-  ): Promise<ServiceResponse<{ success: boolean; message: string; cookCount: number; lastCookedAt?: Date; }>> {
-    try {
-      const userId = req.user.id;
-      const result = await this.recipeService.markAsCooked(id, userId);
-
-      return {
-        success: true,
-        data: result
-      };
-    } catch (error: unknown) {
-      this.logger.error(`Mark cooked error for ID ${id}:`, error instanceof Error ? error.message : 'Unknown error');
-      return {
-        success: false,
-        error: 'Failed to mark recipe as cooked'
-      };
-    }
-  }
 }

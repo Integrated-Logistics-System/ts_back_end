@@ -1,7 +1,7 @@
 import { Module } from '@nestjs/common';
 import { AuthModule } from '../auth/auth.module';
 import { UserModule } from '../user/user.module';
-import { LanggraphModule } from '../langgraph/langgraph.module';
+import { AgentModule } from '../agent/agent.module';
 import { ChatModule } from '../chat/chat.module';
 import { AiModule } from '../ai/ai.module';
 
@@ -11,7 +11,7 @@ import { ChatGateway } from './websocket.gateway';
   imports: [
     AuthModule,
     UserModule,
-    LanggraphModule,
+    AgentModule,
     ChatModule,
     AiModule,
   ],

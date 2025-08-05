@@ -1,5 +1,5 @@
 import { Module } from '@nestjs/common';
-import { ConfigModule } from '@nestjs/config';
+import {ConfigModule, ConfigService} from '@nestjs/config';
 
 // ==================== Core Infrastructure ====================
 import { DatabaseModule } from './modules/database/database.module';
@@ -16,8 +16,6 @@ import { ElasticsearchModule } from './modules/elasticsearch/elasticsearch.modul
 
 // ==================== AI Domain ====================
 import { AiModule } from './modules/ai/ai.module';
-import { LanggraphModule } from './modules/langgraph/langgraph.module';
-import { EmbeddingModule } from './modules/embedding/embedding.module';
 
 // ==================== Communication Domain ====================
 import { WebsocketModule } from './modules/websocket/websocket.module';
@@ -33,12 +31,44 @@ import { ChatModule } from './modules/chat/chat.module';
 
     // ==================== Core Infrastructure ====================
     DatabaseModule.forRoot(),
-    CacheModule.forRoot({
-      defaultTtl: 3600,
-      maxMemoryKeys: 1000,
-      chatHistoryMaxLength: 20,
-      sessionTtl: 7200,
-      enableRedis: process.env.REDIS_ENABLED !== 'false',
+    CacheModule.registerAsync({ // forRoot 대신 registerAsync 사용
+      imports: [ConfigModule], // ConfigModule import
+      inject: [ConfigService], // ConfigService 주입
+      useFactory: async (configService: ConfigService) => {
+        const redisUrl = configService.get<string>('REDIS_URL');
+        let enableRedis = configService.get<string>('REDIS_ENABLED') !== 'false';
+
+        let redisHost: string | undefined;
+        let redisPort: number | undefined;
+        let redisPassword: string | undefined;
+        let redisDb: number | undefined;
+
+        if (redisUrl) {
+          try {
+            const url = new URL(redisUrl);
+            redisHost = url.hostname;
+            redisPort = url.port ? parseInt(url.port, 10) : undefined;
+            redisPassword = url.password || undefined;
+            redisDb = url.pathname ? parseInt(url.pathname.substring(1), 10) : undefined;
+          } catch (error) {
+            console.warn(`Invalid REDIS_URL: ${redisUrl}. Falling back to default or memory cache.`, error);
+            // 유효하지 않은 URL인 경우 Redis 비활성화
+            enableRedis = false;
+          }
+        }
+
+        return {
+          defaultTtl: 3600,
+          maxMemoryKeys: 1000,
+          chatHistoryMaxLength: 20,
+          sessionTtl: 7200,
+          enableRedis: enableRedis,
+          redisHost: redisHost,
+          redisPort: redisPort,
+          redisPassword: redisPassword,
+          redisDb: redisDb,
+        };
+      },
     }),
 
     // ==================== User Domain ====================
@@ -52,15 +82,12 @@ import { ChatModule } from './modules/chat/chat.module';
 
     // ==================== AI Domain ====================
     AiModule.forRoot({
-      provider: 'ollama',
       config: {
-        url: process.env.OLLAMA_URL || 'http://localhost:11434',
-        model: process.env.OLLAMA_MODEL || 'gemma3n:e4b',
+        url: process.env.OLLAMA_BASE_URL || 'http://localhost:11434',
+        model: process.env.OLLAMA_LLM_MODEL || 'gemma3n:e4b',
         timeout: 30000,
       },
     }),
-    EmbeddingModule,
-    LanggraphModule,
 
     // ==================== Communication Domain ====================
     ChatModule,

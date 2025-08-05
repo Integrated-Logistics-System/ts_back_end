@@ -1,9 +1,7 @@
 import { Injectable, Inject, Logger, OnModuleInit } from '@nestjs/common';
 import { AiModuleOptions } from './ai.module';
-import { AiProvider, AiResponse, AiStreamResponse, GenerationOptions } from './interfaces/ai.interfaces';
-import { OllamaProvider } from './providers/ollama.provider';
-import { OpenAIProvider } from './providers/openai.provider';
-import { AnthropicProvider } from './providers/anthropic.provider';
+import { GenerationOptions } from './interfaces/ai.interfaces';
+import { Ollama } from '@langchain/ollama';
 
 function isErrorWithMessage(error: unknown): error is { message: string } {
     return (
@@ -18,14 +16,18 @@ function isErrorWithMessage(error: unknown): error is { message: string } {
 export class AiService implements OnModuleInit {
     private readonly logger = new Logger(AiService.name);
     private isConnected = false;
-    private provider: string;
     private config: AiModuleOptions['config'];
-    private aiProvider: AiProvider;
+    private ollama: Ollama;
 
     constructor(@Inject('AI_OPTIONS') private readonly options: AiModuleOptions) {
-        this.provider = options.provider;
         this.config = options.config;
-        this.aiProvider = this.createProvider();
+        
+        // LangChain Ollama 초기화
+        this.ollama = new Ollama({
+            baseUrl: this.config.url || 'http://localhost:11434',
+            model: this.config.model || 'gemma3n:e4b',
+            temperature: 0.7,
+        });
     }
 
     async onModuleInit() {
@@ -34,59 +36,117 @@ export class AiService implements OnModuleInit {
 
     // ================== 연결 관리 ==================
 
-    private createProvider(): AiProvider {
-        switch (this.provider) {
-            case 'ollama':
-                return new OllamaProvider(this.config);
-            case 'openai':
-                return new OpenAIProvider(this.config);
-            case 'anthropic':
-                return new AnthropicProvider(this.config);
-            default:
-                throw new Error(`Unsupported AI provider: ${this.provider}`);
-        }
-    }
-
     private async initializeConnection(): Promise<void> {
         try {
-            await this.aiProvider.initialize();
+            // Ollama 서버 연결 테스트
+            const response = await fetch(`${this.config.url}/api/tags`);
+            if (!response.ok) {
+                throw new Error(`Ollama connection failed: ${response.status}`);
+            }
+
+            // 모델 존재 확인
+            const models = await response.json() as { models: { name: string }[] };
+            const hasModel = models.models.some((m) => m.name.includes(this.config.model!));
+
+            if (!hasModel) {
+                this.logger.warn(`Model ${this.config.model} not found, attempting to pull...`);
+                await this.pullModel();
+            }
+
             this.isConnected = true;
-            this.logger.log(`🤖 AI Service initialized - Provider: ${this.provider}, Model: ${this.config.model}`);
+            this.logger.log(`🤖 AI Service initialized - Model: ${this.config.model}`);
         } catch (error: unknown) {
             this.logger.warn(`AI service initialization failed, using fallback mode: ${this.getErrorMessage(error)}`);
             this.isConnected = false;
         }
     }
 
+    private async pullModel(): Promise<void> {
+        try {
+            const response = await fetch(`${this.config.url}/api/pull`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name: this.config.model }),
+            });
+
+            if (!response.ok) {
+                throw new Error(`Failed to pull model ${this.config.model}`);
+            }
+            
+            this.logger.log(`✅ Model ${this.config.model} pulled successfully`);
+        } catch (error) {
+            this.logger.warn(`Failed to pull model: ${this.getErrorMessage(error)}`);
+        }
+    }
+
     // ================== 텍스트 생성 ==================
 
     async generateResponse(prompt: string, options?: GenerationOptions): Promise<string> {
-        const response = await this.generateText(prompt, options);
-        return response.content;
+        try {
+            // JSON 응답 전용 프롬프트 강화
+            const enhancedPrompt = this.enhancePromptForJson(prompt);
+            
+            // 옵션이 있으면 temperature 동적 설정
+            if (options?.temperature !== undefined) {
+                this.ollama.temperature = options.temperature;
+            }
+            
+            // LangChain Ollama 사용
+            const response = await this.ollama.invoke(enhancedPrompt);
+            return response;
+        } catch (error) {
+            this.logger.warn(`AI generation failed: ${this.getErrorMessage(error)}`);
+            // 폴백 응답 사용
+            return this.generateFallbackContent(prompt);
+        }
     }
 
-    async generateText(prompt: string, options?: GenerationOptions): Promise<AiResponse> {
-        if (!this.isConnected) {
-            return this.getFallbackResponse(prompt);
-        }
+    /**
+     * JSON 응답을 위한 프롬프트 강화
+     */
+    private enhancePromptForJson(prompt: string): string {
+        // JSON 응답이 필요한 프롬프트인지 확인
+        if (prompt.includes('JSON') || prompt.includes('json') || prompt.includes('{')) {
+            return `System: You must respond with ONLY valid JSON. No markdown code blocks. No explanations. No \`\`\`json or \`\`\`. Just the JSON object.
 
-        try {
-            return await this.aiProvider.generateText(prompt, options);
-        } catch (error: unknown) {
-            this.logger.error(`Text generation failed: ${this.getErrorMessage(error)}`);
-            return this.getFallbackResponse(prompt);
+${prompt}
+
+Remember: ONLY JSON output. NO markdown formatting.`;
         }
+        
+        // URL 제약사항 추가
+        return `${prompt}
+
+중요한 제약사항:
+- 어떤 URL, 링크, 웹 주소도 포함하지 마세요
+- 유튜브 링크나 외부 사이트 링크를 생성하지 마세요
+- 존재하지 않는 링크를 만들어내지 마세요
+- 텍스트 기반의 레시피 정보에만 집중하세요`;
     }
 
-    async *streamText(prompt: string, options?: GenerationOptions): AsyncIterable<AiStreamResponse> {
-        if (!this.isConnected) {
-            yield* this.getFallbackStream(prompt);
-            return;
-        }
-
+    async *streamText(prompt: string, options?: GenerationOptions): AsyncIterable<{ content: string; done: boolean }> {
         try {
-            yield* this.aiProvider.streamText(prompt, options);
-        } catch (error: unknown) {
+            const enhancedPrompt = this.enhancePromptForJson(prompt);
+            
+            if (options?.temperature !== undefined) {
+                this.ollama.temperature = options.temperature;
+            }
+            
+            // LangChain의 스트림 기능 사용
+            const stream = await this.ollama.stream(enhancedPrompt);
+            
+            for await (const chunk of stream) {
+                yield {
+                    content: chunk,
+                    done: false
+                };
+            }
+            
+            yield {
+                content: '',
+                done: true
+            };
+        } catch (error) {
             this.logger.error(`Stream generation failed: ${this.getErrorMessage(error)}`);
             yield* this.getFallbackStream(prompt);
         }
@@ -94,22 +154,7 @@ export class AiService implements OnModuleInit {
 
     // ================== 폴백 응답 ==================
 
-    private getFallbackResponse(prompt: string): AiResponse {
-        const response = this.generateFallbackContent(prompt);
-
-        return {
-            content: response,
-            model: 'fallback',
-            finishReason: 'stop',
-            usage: {
-                promptTokens: 0,
-                completionTokens: response.length / 4, // 대략적인 토큰 수
-                totalTokens: response.length / 4,
-            },
-        };
-    }
-
-    private async *getFallbackStream(prompt: string): AsyncIterable<AiStreamResponse> {
+    private async *getFallbackStream(prompt: string): AsyncIterable<{ content: string; done: boolean }> {
         const response = this.generateFallbackContent(prompt);
         const words = response.split(' ');
 
@@ -161,18 +206,15 @@ export class AiService implements OnModuleInit {
 
     async getStatus(): Promise<{
         isConnected: boolean;
-        provider: string;
         model: string | undefined;
-        config: AiModuleOptions['config'];
+        config: { url?: string; timeout?: number };
     }> {
         return {
             isConnected: this.isConnected,
-            provider: this.provider,
             model: this.config.model,
             config: {
                 url: this.config.url,
                 timeout: this.config.timeout,
-                // API 키는 보안상 제외
             },
         };
     }

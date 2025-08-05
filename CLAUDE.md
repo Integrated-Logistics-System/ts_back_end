@@ -1,240 +1,282 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to Claude Code (claude.ai/code) when working with this NestJS backend codebase.
 
 ## Development Commands
 
+### Local Development
 ```bash
-# Development
-npm run start:dev          # Hot reload development server
-npm run start:debug        # Debug mode with watch
-npm run start:prod         # Production mode
+npm run start:dev         # Start development server with hot reload
+npm run start:debug       # Start with debugging enabled
+npm run build             # Build for production
+npm run start:prod        # Start production server
+```
 
-# Build & Quality
-npm run build              # TypeScript compilation
-npm run lint               # ESLint with auto-fix
-npm run format             # Prettier formatting
+### Testing
+```bash
+npm run test              # Run unit tests
+npm run test:watch        # Run tests in watch mode
+npm run test:cov          # Run tests with coverage
+npm run test:e2e          # Run end-to-end tests
+```
 
-# Docker
-docker build -t smart-recipe-backend .
-docker run -p 8081:8081 -p 8083:8083 smart-recipe-backend
+### Code Quality
+```bash
+npm run lint              # Run ESLint
+npm run lint:fix          # Fix ESLint issues automatically
+npm run format            # Format code with Prettier
 ```
 
 ## Architecture Overview
 
-This is a **NestJS TypeScript backend** for an AI-powered recipe recommendation system with the following key characteristics:
+This is a NestJS-based backend for a Smart Recipe Chatbot with AI-powered conversation capabilities.
 
-### Core Technology Stack
-- **Framework**: NestJS v10.3.8 with TypeScript 5.4+
-- **AI**: LangGraph v0.3.8 + Ollama (gemma2:2b model)
-- **Databases**: MongoDB (primary), Elasticsearch (search), Redis (cache)
-- **Real-time**: WebSocket with Socket.IO for streaming AI responses
-- **Authentication**: JWT with Passport + Redis sessions
+### Key Technologies
+- **Framework**: NestJS with TypeScript
+- **AI Integration**: Ollama (gemma3n:e4b model)
+- **Search Engine**: Elasticsearch for recipe indexing and RAG
+- **Databases**: MongoDB (users, chat history), Redis (caching, sessions)
+- **Real-time Communication**: Socket.IO WebSocket gateway
+- **Authentication**: JWT-based auth with guards and strategies
 
-### Domain Architecture
-The codebase follows a **domain-driven modular design** with clear separation:
-
+### Project Structure
 ```
-📁 Core Infrastructure
-├── database/     - MongoDB connection and configuration
-├── cache/        - Redis with memory fallback caching
-└── elasticsearch/ - Recipe search with Korean language support
-
-📁 User Domain  
-├── user/         - User profile and preferences
-├── auth/         - JWT authentication and session management
-└── allergen/     - Allergy type management
-
-📁 Recipe Domain
-└── recipe/       - Recipe CRUD with metadata (views, ratings, bookmarks)
-
-📁 AI Domain
-├── ai/           - Multi-provider AI service (Ollama primary)
-├── langgraph/    - LangGraph v0.3.8 workflows for complex AI tasks  
-└── conversation/ - ChatGPT-style conversational AI
-
-📁 Communication
-├── websocket/    - Real-time WebSocket gateway
-└── chat/         - Chat message handling
+src/
+   main.ts                    # Application entry point
+   app.module.ts             # Root module
+   modules/                  # Feature modules
+      agent/                 # AI Agent system (core business logic)
+         core/               # Main agent service
+         classification/     # Intent classification
+         search/             # Elasticsearch integration
+         generation/         # Response generation
+      websocket/             # Real-time WebSocket communication
+      auth/                  # Authentication & authorization
+      user/                  # User management
+      chat/                  # Chat history management
+      recipe/                # Recipe CRUD operations
+      elasticsearch/         # Search engine integration
+      ai/                    # AI service abstraction
+      cache/                 # Cache management
+   shared/                   # Common utilities and interfaces
 ```
 
-### Key Features
-- **Advanced AI Integration**: LangGraph workflows for multi-step AI reasoning
-- **Hybrid Search**: Elasticsearch + MongoDB for optimized recipe discovery
-- **Allergy-Aware**: Integrated allergy filtering throughout the system
-- **Real-time Streaming**: WebSocket-based AI response streaming
-- **Multi-level Caching**: Redis + memory cache with intelligent fallback
+### Core System: Intent-Based Agent Architecture
 
-## Critical Configuration
+The system processes user messages through an AI-powered agent that:
+1. **Analyzes Context** - Understands conversation history and user preferences
+2. **Classifies Intent** - Determines what the user wants (recipe list, details, alternatives, general chat)
+3. **Processes Request** - Executes appropriate handler based on intent
+4. **Transforms Data** - Converts Elasticsearch data to frontend-compatible format
+5. **Generates Response** - Creates AI-powered natural language responses
 
-### Environment Variables
-The system requires several external services configured in `.env`:
+#### Intent Types
+- `RECIPE_LIST` - User wants recipe recommendations/listings
+- `RECIPE_DETAIL` - User wants detailed recipe instructions  
+- `ALTERNATIVE_RECIPE` - User wants alternative ingredients/methods
+- `GENERAL_CHAT` - General conversation not recipe-specific
 
+#### Key Data Flow
+```
+User Message → WebSocket Gateway → Agent Service → Intent Classifier
+     ↓
+Elasticsearch Search → Data Transformation → AI Response → WebSocket Response
+```
+
+### Critical Backend-Frontend Data Mapping
+
+**Backend transforms Elasticsearch data for frontend consumption:**
+
+```typescript
+// Elasticsearch format
+{
+  nameKo: "첼시의 닭가슴살 요리",
+  stepsKo: ["닭가슴살을 준비한다", "양념을 바른다", ...],
+  ingredientsKo: ["닭가슴살", "소금", "후추"]
+}
+
+// Transformed to frontend format  
+{
+  title: "첼시의 닭가슴살 요리",
+  steps: [
+    { step: 1, instruction: "닭가슴살을 준비한다", time: null, tip: null },
+    { step: 2, instruction: "양념을 바른다", time: null, tip: null }
+  ],
+  ingredients: ["닭가슴살", "소금", "후추"]
+}
+```
+
+**WebSocket Response Structure by Intent:**
+- `recipe_list` → `recipes[]` array for RecipeCard components
+- `recipe_detail` → `recipeDetail` object for RecipeDetailCard component
+- Frontend uses `conversationType` metadata to render appropriate UI
+
+### Environment Configuration
+
+Required services for development:
+- **MongoDB**: User data, chat history
+- **Redis**: Session management, caching  
+- **Elasticsearch**: Recipe search and indexing
+- **Ollama**: Local LLM service with gemma3n:e4b model
+
+### Key Environment Variables
 ```bash
-# Required external services
-MONGODB_URI=mongodb://recipe_admin:RecipeAI2024!@192.168.0.112:27017/recipe_ai_db
-ELASTICSEARCH_URL=http://192.168.0.112:9200  
+# Database
+MONGODB_URI=mongodb+srv://recipe_admin:riqcFEUvo0Bj9EQF@cluster0.zmu0szz.mongodb.net/recipe_ai_db?retryWrites=true&w=majority&appName=Cluster0
 REDIS_URL=redis://:RecipeAI2024!@192.168.0.112:6379
+
+# Search & AI
+ELASTICSEARCH_URL=http://192.168.0.112:9200
 OLLAMA_URL=http://localhost:11434
-OLLAMA_MODEL=gemma2:2b
+OLLAMA_LLM_MODEL=gemma3n:e4b
+OLLAMA_MAX_TOKENS=4000
 
-# Server configuration
-PORT=8081           # HTTP server
-WEBSOCKET_PORT=8083 # WebSocket server
+# Authentication
+JWT_SECRET=recipe-ai-ultra-secure-key-2024!@#$%^&*()_+
+JWT_EXPIRES_IN=7d
+JWT_REFRESH_EXPIRES_IN=30d
+
+# Server
+PORT=8081
+WEBSOCKET_PORT=8083
+NODE_ENV=development
 ```
 
-### TypeScript Configuration
-- **Strict mode** enabled with comprehensive null checks
-- **Path aliases**: `@/*` (src), `@/modules/*`, `@/shared/*` 
-- **ES2022 target** with decorators for NestJS
-- **Source maps** enabled for debugging
+## Database & Search Access Commands
 
-### Service Dependencies
-1. **MongoDB**: Primary database (Atlas cloud or local)
-2. **Elasticsearch**: Recipe search engine with Korean analyzer
-3. **Redis**: Session cache and real-time data
-4. **Ollama**: Local AI model server (gemma2:2b)
+### Elasticsearch Access
+```bash
+# Check cluster health
+curl -X GET "192.168.0.112:9200/_cluster/health?pretty"
 
-## Key Implementation Patterns
+# List all indices
+curl -X GET "192.168.0.112:9200/_cat/indices?v"
 
-### Module Organization
-Each domain module follows a consistent structure:
-- **Controller**: HTTP endpoints with Swagger documentation
-- **Service**: Business logic and external service integration  
-- **Schema/Entity**: MongoDB models with validation
-- **DTO**: Request/response validation with class-validator
-- **Interfaces**: TypeScript contracts for complex types
+# Get recipe count
+curl -X GET "192.168.0.112:9200/recipes/_count?pretty"
 
-### LangGraph Workflows
-The system uses **LangGraph v0.3.8** for complex AI workflows:
-- Located in `src/modules/langgraph/`
-- Supports streaming responses via WebSocket
-- Includes RAG (Retrieval-Augmented Generation) capabilities
-- State management for multi-step AI reasoning
+# Get a sample recipe document
+curl -X GET "192.168.0.112:9200/recipes/_search?size=1&pretty"
 
-### Real-time Communication
-WebSocket implementation supports:
-- **Streaming AI responses**: Token-by-token output
-- **LangGraph workflow updates**: Real-time progress
-- **Chat message handling**: Persistent conversation history
-- **Connection management**: Automatic reconnection and cleanup
-
-### Elasticsearch Vector Search
-The recipe search system uses semantic vector embeddings for enhanced search accuracy:
-
-**Vector Fields Configuration:**
-- **Primary Vector Field**: `embedding` (384 dimensions, cosine similarity)
-  - Model: nomic-embed-text (v1.5) 
-  - Generated from: recipe name, description, ingredients, and tags
-- **Alternative Vector Field**: `embeddingGranite768` (768 dimensions, cosine similarity)
-  - Model: granite-embedding:278m
-  - Backup/testing configuration
-
-**Vectorized Content Format:**
-```
-요리명: [recipe.name]
-설명: [recipe.description]  
-재료: [recipe.ingredients.join(', ')]
-태그: [recipe.tags.join(', ')]
+# Search for specific recipe
+curl -X GET "192.168.0.112:9200/recipes/_search?q=닭가슴살&size=1&pretty"
 ```
 
-**Vector Metadata Fields:**
-- `embeddingVersion`: Model version tracking
-- `embeddingText`: Source text used for embedding generation
-- `embeddingGeneratedAt`: Generation timestamp
+### MongoDB Access
+```bash
+# Connect to MongoDB Atlas (use MongoDB Compass or CLI)
+# Connection String: mongodb+srv://recipe_admin:riqcFEUvo0Bj9EQF@cluster0.zmu0szz.mongodb.net/recipe_ai_db
 
-**Search Architecture:**
-- **Elasticsearch**: Semantic vector search + text search with Korean language support
-- **MongoDB**: Complex relationship queries and metadata
-- **Allergy filtering**: Multi-level safety verification
-- **Caching**: Search result optimization with Redis
+# Database: recipe_ai_db
+# Collections: users, chat_messages, conversations
+```
 
-## Important Development Notes
+## Development Guidelines
+
+### Code Organization
+- **Controllers**: Handle HTTP/WebSocket endpoints
+- **Services**: Contain business logic  
+- **Providers**: External service integrations (AI, DB, Search)
+- **DTOs**: Data transfer objects with validation
+- **Interfaces**: TypeScript type definitions
 
 ### Error Handling
-The system implements comprehensive error handling:
-- **Global exception filters** for consistent API responses
-- **Service-level error recovery** with fallback mechanisms
-- **WebSocket error propagation** for real-time communication
-- **AI service fallbacks** when primary providers fail
+- Use NestJS built-in exceptions (`NotFoundException`, `BadRequestException`, etc.)
+- Log errors with contextual information
+- Return structured error responses to clients
+- Implement graceful fallbacks for AI/external service failures
 
-### Performance Considerations
-- **Connection pooling** for all external services
-- **Streaming responses** to reduce perceived latency
-- **Multi-level caching** (Redis → Memory → Source)
-- **Lazy loading** for non-critical data
-
-### Security Implementation
-- **JWT tokens** with configurable expiration
-- **bcrypt password hashing** (12 rounds)
-- **Input validation** on all endpoints
-- **CORS configuration** for cross-origin requests
-
-### API Documentation
-- **Swagger/OpenAPI** available at `/api/docs`
-- **Structured endpoints**: `/api/{domain}/{action}`
-- **WebSocket events**: Documented in README.md
-- **Response standardization** across all endpoints
-
-## Development Workflow
-
-When working with this codebase:
-
-1. **External Services**: Ensure MongoDB, Elasticsearch, Redis, and Ollama are running
-2. **Environment Setup**: Copy `.env.production` to `.env` and adjust for local development
-3. **Database Initialization**: Run data indexing scripts if working with search features
-4. **Real-time Testing**: Use WebSocket client for testing streaming AI features
-5. **AI Model**: Verify Ollama model (gemma2:2b) is downloaded and accessible
-
-## Common Troubleshooting
-
-- **AI Connection Issues**: Check Ollama service status at `http://localhost:11434/api/tags`
-- **Search Problems**: Verify Elasticsearch connection and recipe index existence
-- **Cache Issues**: Clear Redis cache if experiencing stale data
-- **WebSocket Failures**: Check port 8083 availability and firewall settings
-- **Build Errors**: Run `npm run lint` to identify TypeScript issues
-
-## Developer Notes: Overcoming "Fundamentals Paralysis"
-
-**⚠️ Warning: Avoid Deep Rabbit Holes**
-
-The original developer of this codebase experienced "fundamentals paralysis" - an obsession with understanding every technical detail before proceeding. This significantly slowed development progress.
-
-### What NOT to do:
-- **Don't** spend weeks learning TCP packet structures when implementing HTTP APIs
-- **Don't** dive into JVM internals when using Node.js/TypeScript
-- **Don't** study Elasticsearch Lucene algorithms when simple search queries suffice
-- **Don't** implement complex OOP patterns when simple functions work fine
-- **Don't** pursue "perfect" theoretical knowledge before writing practical code
-
-### What TO do instead:
-- **Use existing abstractions**: NestJS, LangGraph, Elasticsearch clients work fine without deep internals knowledge
-- **Focus on business value**: Solving user problems (recipe recommendations, allergy safety) matters more than technical perfection
-- **Iterate quickly**: 70% understanding + working code > 100% understanding + no progress
-- **Learn by doing**: Practical implementation teaches more than theoretical study
-- **Embrace "good enough"**: Most production systems use pragmatic solutions, not theoretical ideals
-
-### Practical Development Approach:
+### Logging Best Practices
 ```typescript
-// ❌ Over-engineered "perfect" approach
-abstract class AbstractRecipeProcessorFactory<T extends Recipe> {
-  abstract createProcessor(): IRecipeProcessor<T>;
-}
+private readonly logger = new Logger(ServiceName.name);
 
-// ✅ Pragmatic working approach  
-function processRecipe(recipe: Recipe): ProcessedRecipe {
-  return {
-    ...recipe,
-    processed: true,
-    processedAt: new Date()
-  };
-}
+// Use structured logging
+this.logger.log(`🎯 Intent classified: ${intent} (confidence: ${confidence})`);
+this.logger.error(`❌ Processing failed:`, error);
 ```
 
-### Reality Check:
-- Most successful developers know APIs, not internals
-- Companies pay for working features, not theoretical knowledge  
-- "Perfect" code that ships late loses to "good enough" code that ships on time
-- Deep technical knowledge is valuable, but not at the expense of delivery
+### WebSocket Event Patterns
+- `conversation_message` - Standard message processing
+- `conversation_stream` - Streaming responses with real-time chunks
+- `conversation_response` - Complete response with metadata
+- `conversation_chunk` - Streaming chunk with type indicators
 
-**Remember**: This codebase works well using standard patterns and abstractions. Don't let perfectionism prevent you from building valuable features for users.
+### AI Integration Notes
+- All AI calls should have fallback mechanisms
+- Use appropriate temperature settings (0.1 for classification, 0.7 for generation)
+- Implement retry logic for external service failures
+- Cache frequent AI responses when possible
+
+### Testing Strategy
+- **Unit Tests**: Service logic, pure functions
+- **Integration Tests**: Module interactions, database operations
+- **E2E Tests**: Full request-response cycles including WebSocket
+
+### Security Considerations
+- JWT tokens validated on all protected routes
+- WebSocket connections authenticated before processing
+- Input validation using DTOs and class-validator
+- Rate limiting on API endpoints
+- Sensitive data encrypted in database
+
+## Database Schemas
+
+### Key Collections
+- **users**: User profiles, preferences, allergies
+- **chat_messages**: Conversation history with metadata
+- **recipes**: Recipe data (if not using Elasticsearch exclusively)
+
+### Elasticsearch Indices
+- **recipes**: Main recipe search index with Korean/English fields
+- **recipe_vectors**: Semantic search vectors (if using)
+
+## Performance Considerations
+
+### Caching Strategy
+- **Redis**: Session data, frequent search results, AI responses
+- **Application**: In-memory caching for static data
+- **Elasticsearch**: Query result caching
+
+### Optimization Points
+- Elasticsearch query optimization for sub-second response times
+- WebSocket connection pooling and cleanup
+- AI service request batching and caching
+- Database query optimization with proper indexing
+
+## Common Development Tasks
+
+### Adding New Intent Type
+1. Update `UserIntent` enum in intent-classifier.ts
+2. Add classification logic in intent classifier
+3. Implement handler method in main-agent.ts  
+4. Update WebSocket response building logic
+5. Add frontend support for new intent type
+
+### Debugging Data Flow
+1. Check WebSocket Gateway logs for request receipt
+2. Trace through Agent Service processing
+3. Verify Elasticsearch query and results
+4. Confirm data transformation logic
+5. Validate WebSocket response structure
+
+### Performance Monitoring
+- Monitor Elasticsearch query performance
+- Track AI service response times
+- Watch WebSocket connection counts
+- Monitor memory usage and garbage collection
+
+Always run `npm run lint` and `npm run test` before committing changes.
+
+## Documentation
+
+Comprehensive documentation is available in the `docs/` directory:
+- `docs/README.md` - Documentation overview
+- `docs/01-architecture/` - System architecture guide  
+- `docs/02-modules/` - Individual module documentation
+- `docs/03-data-flow/` - Data processing pipeline
+- `docs/04-api-reference/` - API specifications
+- `docs/05-development/` - Development setup and guidelines
+- `docs/06-tutorials/` - Step-by-step learning tutorials
+- `docs/LEARNING-ROADMAP.md` - 8-week mastery plan
+
+For questions about system architecture, refer to the relevant documentation section first.

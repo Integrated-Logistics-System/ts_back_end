@@ -1,6 +1,6 @@
 // src/modules/user/user.schema.ts (최소화 버전)
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
-import { Document } from 'mongoose';
+import { Document, ObjectId } from 'mongoose'; // ObjectId 추가
 
 export type UserDocument = User & Document;
 
@@ -9,6 +9,8 @@ export type UserDocument = User & Document;
   collection: 'users'
 })
 export class User {
+  _id!: ObjectId; // _id 속성 추가
+
   @Prop({ required: true, unique: true, index: true })
   email!: string;
 
@@ -99,5 +101,5 @@ export class User {
 export const UserSchema = SchemaFactory.createForClass(User);
 
 // 복합 인덱스 최소화
-UserSchema.index({ email: 1 }); // 로그인용
+// UserSchema.index({ email: 1 }); // 로그인용
 UserSchema.index({ createdAt: 1 }); // 정렬용만

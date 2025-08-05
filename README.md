@@ -4,7 +4,7 @@ AI 기반 개인화 레시피 추천 및 실시간 채팅 시스템
 
 ## 🌟 주요 기능
 
-- **🤖 AI 채팅**: LangGraph v0.3.8 기반 실시간 레시피 상담
+- **🤖 AI 채팅**: Simple ReAct Agent + Ollama 기반 실시간 레시피 상담
 - **🔍 지능형 검색**: Elasticsearch 기반 알레르기 고려 레시피 검색
 - **👤 개인화**: 사용자 프로필 기반 맞춤 추천
 - **⚡ 실시간**: WebSocket 스트리밍 AI 응답
@@ -16,7 +16,7 @@ AI 기반 개인화 레시피 추천 및 실시간 채팅 시스템
 ```
 ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
 │   Frontend      │◄──►│  TypeScript     │◄──►│   AI Services   │
-│   (React)       │    │   Backend       │    │   (LangGraph)   │
+│   (React)       │    │   Backend       │    │   (Ollama)      │
 └─────────────────┘    │   (NestJS)      │    └─────────────────┘
                        └─────────────────┘
                               │
@@ -55,7 +55,8 @@ REDIS_URL=redis://:RecipeAI2024!@192.168.0.112:6379
 
 # ==================== AI 서비스 설정 ====================
 OLLAMA_URL=http://localhost:11434
-OLLAMA_MODEL=gemma2:2b
+OLLAMA_LLM_MODEL=gemma3n:e4b
+OLLAMA_MAX_TOKENS=4000
 
 # ==================== 서버 설정 ====================
 PORT=8081
@@ -169,17 +170,13 @@ POST   /api/recipe/:id/cook        # 요리 완료 기록
 ### 🤖 AI 서비스 (AI)
 
 ```
-POST   /api/ai/chat               # AI 채팅
-POST   /api/ai/recipe-suggest     # AI 레시피 추천
-GET    /api/ai/status             # AI 서비스 상태
-```
-
-### 🔗 LangGraph 워크플로우
-
-```
-POST   /api/langgraph/recipe      # 레시피 워크플로우
-POST   /api/langgraph/rag         # RAG 검색
-GET    /api/langgraph/status      # 워크플로우 상태
+POST   /api/chat                  # Simple ReAct Agent 채팅
+POST   /api/chat/search           # 레시피 검색
+GET    /api/chat/status           # Agent 상태
+POST   /api/chat/suggestions      # 검색 제안
+POST   /api/chat/keywords         # 키워드 추출
+GET    /api/api/ai/status         # AI 서비스 상태
+POST   /api/api/ai/generate       # AI 응답 생성
 ```
 
 ## 🌐 WebSocket 이벤트
@@ -195,36 +192,41 @@ socket.emit('ping');
 socket.on('pong', (data) => console.log(data));
 ```
 
-### 채팅
+### Simple ReAct Agent 채팅
 
 ```javascript
-// 메시지 전송
-socket.emit('send-message', { message: '김치찌개 레시피 알려줘' });
+// 일반 대화 메시지
+socket.emit('conversation_message', { 
+  message: '김치찌개 레시피 알려줘',
+  sessionId: 'unique-session-id'
+});
 
 // 응답 수신
-socket.on('chat-chunk', (chunk) => console.log(chunk.chunk));
-socket.on('chat-complete', (response) => console.log(response.message));
-```
-
-### LangGraph 워크플로우
-
-```javascript
-// 레시피 워크플로우 (최신 v0.3.8)
-socket.emit('langgraph_recipe_v2', {
-  query: '알레르기 없는 간단한 요리',
-  allergies: ['유제품', '견과류']
+socket.on('conversation_response', (response) => {
+  console.log('AI 응답:', response.content);
+  console.log('추천 레시피:', response.recipeData);
+  console.log('후속 제안:', response.suggestedFollowups);
 });
 
-// 실시간 스트리밍 수신
-socket.on('langgraph_chunk_v2', (chunk) => {
-  console.log(`[${chunk.node}] ${chunk.content}`);
+// 스트리밍 채팅
+socket.emit('conversation_stream', {
+  message: '30분 안에 만들 수 있는 파스타',
+  sessionId: 'stream-session-id'
 });
 
-// RAG 검색
-socket.emit('langgraph_rag_v2', {
-  query: '비건 파스타 레시피',
-  allergies: ['유제품'],
-  preferences: ['비건']
+// 스트리밍 응답 수신
+socket.on('conversation_chunk', (chunk) => {
+  if (chunk.type === 'token') {
+    console.log('청크:', chunk.content);
+  } else if (chunk.isComplete) {
+    console.log('완료:', chunk.metadata);
+  }
+});
+
+// 채팅 히스토리 조회
+socket.emit('get_chat_history');
+socket.on('chat_history', (data) => {
+  console.log('히스토리:', data.messages);
 });
 ```
 
@@ -279,17 +281,18 @@ ts_backend/
 │   │   ├── auth/           # JWT 인증 및 권한
 │   │   ├── user/           # 사용자 관리
 │   │   ├── recipe/         # 레시피 CRUD
-│   │   ├── ai/             # AI 서비스 통합
-│   │   ├── langgraph/      # LangGraph 워크플로우
-│   │   ├── websocket/      # 실시간 통신
+│   │   ├── ai/             # Ollama AI 서비스 통합
+│   │   ├── agent/          # Simple ReAct Agent 구현
+│   │   ├── rag/            # RAG 검색 시스템
+│   │   ├── websocket/      # 실시간 통신 (자동 환영 메시지)
+│   │   ├── chat/           # 채팅 히스토리 관리
 │   │   ├── cache/          # Redis 캐시
 │   │   ├── database/       # MongoDB 연결
 │   │   └── elasticsearch/  # ES 검색 서비스
-│   ├── prompts/            # AI 프롬프트 관리
-│   │   ├── chat/          # 채팅 프롬프트
-│   │   ├── recipe/        # 레시피 프롬프트
-│   │   └── langgraph/     # 워크플로우 프롬프트
 │   ├── shared/            # 공통 DTO/인터페이스
+│   │   ├── dto/           # 데이터 전송 객체
+│   │   ├── interfaces/    # TypeScript 인터페이스
+│   │   └── guards/        # 인증 가드
 │   └── test/              # 테스트 파일 (예정)
 ├── scripts/               # 관리 스크립트
 ├── dist/                  # 빌드 결과물
@@ -300,21 +303,26 @@ ts_backend/
 ## 🔍 주요 모듈 설명
 
 ### 1. AI 모듈 (`/modules/ai/`)
-- **다중 프로바이더 지원**: Ollama, OpenAI, Anthropic
+- **다중 프로바이더 지원**: Ollama (Primary), OpenAI, Anthropic
 - **폴백 시스템**: AI 서비스 실패 시 기본 응답
 - **스트리밍**: 실시간 토큰 단위 응답
 
-### 2. LangGraph 모듈 (`/modules/langgraph/`)
-- **워크플로우 엔진**: v0.3.8 최신 기능
-- **RAG 시스템**: 벡터 검색 + 생성형 AI
-- **상태 관리**: 복잡한 다단계 추론
+### 2. Simple ReAct Agent 모듈 (`/modules/agent/`)
+- **단순한 ReAct 패턴**: 복잡한 LangGraph 대신 간단한 구현
+- **3단계 처리**: 키워드 추출 → RAG 검색 → AI 응답 생성
+- **자동 환영 메시지**: 사용자 프로필 기반 맞춤 인사
 
-### 3. 레시피 모듈 (`/modules/recipe/`)
+### 3. RAG 시스템 (`/modules/rag/`)
+- **Elasticsearch 기반**: 한국어 레시피 검색 최적화
+- **키워드 추출**: 자연어에서 요리 관련 키워드 식별
+- **검색 제안**: 사용자 의도 기반 후속 검색어 생성
+
+### 4. 레시피 모듈 (`/modules/recipe/`)
 - **하이브리드 검색**: ES + MongoDB 결합
 - **메타데이터 관리**: 조회수, 평점, 북마크
 - **개인화**: 사용자별 추천 알고리즘
 
-### 4. 인증 모듈 (`/modules/auth/`)
+### 5. 인증 모듈 (`/modules/auth/`)
 - **JWT 토큰**: 무상태 인증
 - **Redis 세션**: 빠른 사용자 검증
 - **권한 관리**: Role-based access control
@@ -364,8 +372,9 @@ ts_backend/
 # Ollama 서비스 확인
 curl http://localhost:11434/api/tags
 
-# 모델 다운로드
-ollama pull gemma2:2b
+# 모델 다운로드 및 확인
+ollama pull gemma3n:e4b
+ollama list
 ```
 
 #### 2. Elasticsearch 연결 오류
@@ -411,10 +420,11 @@ npm run start:debug
 ## 📈 성능 벤치마크
 
 ### 현재 성능 지표
-- **레시피 검색**: < 100ms (ES 캐시 활용)
-- **AI 채팅 응답**: < 2s (Ollama 로컬)
+- **레시피 검색**: < 500ms (ES 인덱스 223,945개 레시피)
+- **Simple Agent 처리**: 3-10s (Ollama gemma3n:e4b 로컬)
 - **사용자 인증**: < 50ms (Redis 세션)
 - **WebSocket 지연**: < 10ms (로컬 네트워크)
+- **자동 환영 메시지**: 1s 지연 후 전송
 
 ### 최적화 목표
 - **동시 사용자**: 1,000명 지원
@@ -494,8 +504,25 @@ npm run elasticsearch:index
 # 로그 실시간 확인
 tail -f logs/app.log
 
+# Ollama 모델 확인
+ollama list
+ollama pull gemma3n:e4b
+
+# Simple Agent 테스트
+curl -X POST http://localhost:8081/api/chat \
+  -H "Content-Type: application/json" \
+  -d '{"message": "김치찌개 레시피 추천해줘"}'
+
 # Docker 빌드 & 실행
 docker build -t recipe-backend . && docker run -p 8081:8081 -p 8083:8083 recipe-backend
 ```
 
-> **💡 Tip**: 개발 중 문제가 발생하면 먼저 Health Check 엔드포인트(`/api/auth/health`)를 확인하고, 각 서비스(MongoDB, ES, Redis, Ollama)의 연결 상태를 점검하세요.
+### 🎯 **Simple ReAct Agent 특징**
+
+- **✅ 간단한 구조**: 복잡한 LangGraph 대신 3단계 ReAct 패턴
+- **🦙 Ollama 통합**: 로컬 gemma3n:e4b 모델 사용
+- **🔍 RAG 검색**: Elasticsearch 기반 레시피 검색
+- **👋 자동 환영**: 사용자 프로필 기반 맞춤 인사
+- **⚡ 빠른 응답**: 평균 3-10초 처리 시간
+
+> **💡 Tip**: 개발 중 문제가 발생하면 먼저 Health Check 엔드포인트(`/api/auth/health`)를 확인하고, 각 서비스(MongoDB, ES, Redis, Ollama)의 연결 상태를 점검하세요. Simple Agent는 AI 서비스 실패 시 RAG 검색 결과를 기본 응답으로 사용합니다.

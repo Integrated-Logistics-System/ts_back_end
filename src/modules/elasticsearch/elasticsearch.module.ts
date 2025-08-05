@@ -1,7 +1,6 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { Client } from '@elastic/elasticsearch';
-import { EmbeddingModule } from '../embedding/embedding.module';
 import { CacheModule } from '../cache/cache.module';
 
 // Main service
@@ -11,12 +10,10 @@ import { ElasticsearchService } from './elasticsearch.service';
 import { RecipeSearchService } from './search/recipe-search.service';
 import { AllergenProcessor } from './processors/allergen-processor.service';
 
-// Controllers
-import { VectorSearchController } from './controllers/vector-search.controller';
 
 @Module({
-  imports: [ConfigModule, EmbeddingModule, CacheModule],
-  controllers: [VectorSearchController],
+  imports: [ConfigModule, CacheModule],
+  controllers: [],
   providers: [
     // Elasticsearch Client Provider
     {

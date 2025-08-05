@@ -1,13 +1,10 @@
 // src/modules/ai/ai.module.ts
 import { Module, DynamicModule, Type } from '@nestjs/common';
 import { AiService } from './ai.service';
-import { AiController } from './ai.controller';
 
 export interface AiModuleOptions {
-    provider: 'ollama' | 'openai' | 'anthropic';
     config: {
         url?: string;
-        apiKey?: string;
         model?: string;
         timeout?: number;
     };
@@ -25,7 +22,6 @@ export class AiModule {
                 },
                 AiService,
             ],
-            controllers: [AiController],
             exports: [AiService],
             global: true,
         };
@@ -45,7 +41,6 @@ export class AiModule {
                 },
                 AiService,
             ],
-            controllers: [AiController],
             exports: [AiService],
             global: true,
         };

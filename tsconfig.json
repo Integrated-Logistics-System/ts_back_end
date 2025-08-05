@@ -36,6 +36,7 @@
     "node_modules",
     "dist",
     "logs",
-    "backups"
+    "backups",
+    "src/modules/_archive/**/*"
   ]
 }

@@ -13,6 +13,7 @@ export interface ChatMessage {
     recipeId?: string;
     hasRecipe?: boolean;
     processingTime?: number;
+    intent?: string; // Add intent property
   };
 }
 
@@ -60,19 +61,8 @@ export class ChatHistoryService {
         metadata,
       };
 
-      const key = `${this.CHAT_HISTORY_KEY}${userId}`;
-      
-      // 캐시에 대화 저장 (배열로 관리)
-      const existingHistory = await this.cacheService.get<ChatMessage[]>(key) || [];
-      existingHistory.unshift(chatMessage); // 최신 메시지를 앞에 추가
-      
-      // 최대 길이 유지
-      if (existingHistory.length > this.MAX_HISTORY_LENGTH) {
-        existingHistory.splice(this.MAX_HISTORY_LENGTH);
-      }
-      
-      // TTL과 함께 저장
-      await this.cacheService.set(key, existingHistory, this.CONTEXT_TTL);
+      // CacheService의 addChatMessage 메서드 사용
+      await this.cacheService.addChatMessage(userId, JSON.stringify(chatMessage));
 
       this.logger.log(`💬 Chat message saved for user ${userId}: ${type}`);
       
@@ -88,11 +78,11 @@ export class ChatHistoryService {
 
   async getChatHistory(userId: string, limit: number = 10): Promise<ChatMessage[]> {
     try {
-      const key = `${this.CHAT_HISTORY_KEY}${userId}`;
-      const messages = await this.cacheService.get<ChatMessage[]>(key) || [];
+      // CacheService의 getChatHistory 메서드 사용
+      const messages = await this.cacheService.getChatHistory(userId, limit);
       
       return messages
-        .slice(0, limit)
+        .map(msg => JSON.parse(msg) as ChatMessage)
         .filter(msg => msg !== null)
         .sort((a, b) => b.timestamp - a.timestamp);
     } catch (error) {
@@ -188,7 +178,8 @@ export class ChatHistoryService {
 
   async clearChatHistory(userId: string): Promise<void> {
     try {
-      await this.cacheService.delete(`${this.CHAT_HISTORY_KEY}${userId}`);
+      // CacheService의 clearChatHistory 메서드 사용
+      await this.cacheService.clearChatHistory(userId);
       await this.cacheService.delete(`${this.USER_CONTEXT_KEY}${userId}`);
       this.logger.log(`🗑️ Chat history cleared for user ${userId}`);
     } catch (error) {

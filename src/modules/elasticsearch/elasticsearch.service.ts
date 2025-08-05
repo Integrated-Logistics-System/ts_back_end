@@ -12,13 +12,6 @@ import {
   BulkOperationResult,
   RecipeStats,
   HealthStatus,
-  // Vector Search 타입들 추가
-  VectorSearchOptions,
-  VectorSearchResult,
-  VectorSearchResponse,
-  EmbeddingIndexingOptions,
-  EmbeddingIndexingProgress,
-  EmbeddingIndexingResult,
 } from './types/elasticsearch.types';
 
 // Re-export types for external use
@@ -33,13 +26,6 @@ export {
   RecipeStats,
   HealthStatus,
   AllergenInfo,
-  // Vector Search 타입들 추가
-  VectorSearchOptions,
-  VectorSearchResult,
-  VectorSearchResponse,
-  EmbeddingIndexingOptions,
-  EmbeddingIndexingProgress,
-  EmbeddingIndexingResult,
 } from './types/elasticsearch.types';
 
 // Modular services
@@ -173,66 +159,7 @@ export class ElasticsearchService implements OnModuleInit {
     return this.recipeSearchService.getTopRatedRecipes(limit);
   }
 
-  // ==================== Management Operations ====================
 
-  /**
-   * 새 레시피 저장 (기능 제거됨)
-   */
-  async saveRecipe(input: RecipeCreateInput): Promise<ElasticsearchRecipe> {
-    this.ensureConnection();
-    throw new Error('Recipe management service has been removed');
-  }
-
-  /**
-   * 레시피 업데이트 (기능 제거됨)
-   */
-  async updateRecipe(input: RecipeUpdateInput): Promise<ElasticsearchRecipe> {
-    this.ensureConnection();
-    throw new Error('Recipe management service has been removed');
-  }
-
-  /**
-   * 레시피 삭제 (기능 제거됨)
-   */
-  async deleteRecipe(id: string): Promise<boolean> {
-    this.ensureConnection();
-    throw new Error('Recipe management service has been removed');
-  }
-
-  /**
-   * 대량 레시피 저장 (기능 제거됨)
-   */
-  async bulkSaveRecipes(recipes: Partial<ElasticsearchRecipe>[]): Promise<BulkOperationResult> {
-    this.ensureConnection();
-    throw new Error('Recipe management service has been removed');
-  }
-
-  /**
-   * 대량 레시피 업데이트 (기능 제거됨)
-   */
-  async bulkUpdateRecipes(updates: RecipeUpdateInput[]): Promise<BulkOperationResult> {
-    this.ensureConnection();
-    throw new Error('Recipe management service has been removed');
-  }
-
-  /**
-   * 대량 레시피 삭제 (기능 제거됨)
-   */
-  async bulkDeleteRecipes(ids: string[]): Promise<BulkOperationResult> {
-    this.ensureConnection();
-    throw new Error('Recipe management service has been removed');
-  }
-
-  /**
-   * 레시피 복제 (기능 제거됨)
-   */
-  async duplicateRecipe(
-    originalId: string, 
-    modifications: Partial<ElasticsearchRecipe> = {}
-  ): Promise<ElasticsearchRecipe> {
-    this.ensureConnection();
-    throw new Error('Recipe management service has been removed');
-  }
 
   // ==================== Allergen Operations ====================
 
@@ -275,15 +202,6 @@ export class ElasticsearchService implements OnModuleInit {
     return this.allergenProcessor.suggestAllergenFreeAlternatives(ingredients, userAllergies);
   }
 
-  // ==================== Vector Search Operations ====================
-
-  /**
-   * 벡터 검색 (의미적 유사도 기반)
-   */
-  async vectorSearch(options: VectorSearchOptions): Promise<VectorSearchResponse> {
-    this.ensureConnection();
-    return this.recipeSearchService.vectorSearch(options);
-  }
 
   // ==================== Statistics & Health ====================
 
