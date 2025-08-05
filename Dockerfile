@@ -23,6 +23,9 @@ RUN npm prune --production
 # 🏃 Production 스테이지
 FROM node:20-alpine AS production
 
+# curl 설치 (헬스체크용)
+RUN apk add --no-cache curl
+
 # 보안을 위한 비특권 사용자
 RUN addgroup -g 1001 -S nodejs
 RUN adduser -S nestjs -u 1001

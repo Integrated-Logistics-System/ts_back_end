@@ -61,7 +61,7 @@ export class AiService implements OnModuleInit {
         }
     }
 
-    private async pullModel(): Promise<void> {
+    public async pullModel(): Promise<void> {
         try {
             const response = await fetch(`${this.config.url}/api/pull`, {
                 method: 'POST',

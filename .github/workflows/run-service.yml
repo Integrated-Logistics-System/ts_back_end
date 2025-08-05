@@ -25,7 +25,7 @@ jobs:
           mkdir -p ./logs
 
           # Synology DSM 환경에 맞는 'docker compose' (하이픈 없음) 명령어를 사용합니다.
-          docker compose build
+          docker compose build --no-cache
           docker compose up -d
 
       # 3. 서비스 동작 확인 (테스트)
@@ -38,5 +38,5 @@ jobs:
           docker compose ps
 
           echo "Testing API endpoint:"
-          # 테스트에 실패할 경우, 로그를 출력하고 실패 처리합니다.
-          curl --fail http://localhost:8081/api/auth/health || (echo "\n--- Health check failed. Displaying container logs: ---" && docker compose logs && exit 1)
+          # wget을 사용하여 헬스체크 (alpine에는 기본 설치되어 있음)
+          wget --spider --quiet http://localhost:8081/api/auth/health || (echo "\n--- Health check failed. Displaying container logs: ---" && docker compose logs && exit 1)
