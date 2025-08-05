@@ -24,10 +24,13 @@ jobs:
       # 2. Docker Compose로 서비스 빌드 및 실행
       - name: Build and run services with injected secrets
         run: |
+          # Docker 이미지 이름은 소문자여야 하므로, GITHUB_REPOSITORY 변수를 소문자로 변환합니다.
+          export GITHUB_REPOSITORY=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+
           # GitHub Secret(ENV_FILE_BACKEND)의 내용을 .env.production 파일로 생성합니다.
           echo "${{ secrets.ENV_FILE_BACKEND }}" > .env.production
 
-          # docker-compose가 .env.production 파일을 자동으로 읽어 서비스를 실행합니다.
+          # docker-compose가 .env.production 파일과 소문자로 변환된 GITHUB_REPOSITORY를 사용합니다.
           docker-compose build
           docker-compose up -d
 
