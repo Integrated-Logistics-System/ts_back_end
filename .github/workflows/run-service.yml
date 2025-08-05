@@ -32,10 +32,11 @@ jobs:
       - name: Verify service is running
         run: |
           echo "Waiting for the service to start..."
-          sleep 20
+          sleep 40 # 시작 대기 시간을 40초로 늘립니다.
 
           echo "Checking running containers:"
           docker compose ps
 
           echo "Testing API endpoint:"
-          curl --fail http://localhost:8081/api/auth/health || exit 1
+          # 테스트에 실패할 경우, 로그를 출력하고 실패 처리합니다.
+          curl --fail http://localhost:8081/api/auth/health || (echo "\n--- Health check failed. Displaying container logs: ---" && docker compose logs && exit 1)

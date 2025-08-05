@@ -40,9 +40,24 @@ services:
         reservations:
           memory: 1G
 
+  # Ollama 서비스
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama-service
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-data:/root/.ollama
+    restart: unless-stopped
+    networks:
+      - ai-recipe-network
+
 networks:
   ai-recipe-network:
     driver: bridge
+
+volumes:
+  ollama-data:
 
 # 🎯 사용법:
 # export GITHUB_REPOSITORY=your-org/repo-name  
