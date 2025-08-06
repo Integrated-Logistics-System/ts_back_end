@@ -27,6 +27,13 @@ export class AiService implements OnModuleInit {
             baseUrl: this.config.url || 'http://localhost:11434',
             model: this.config.model || 'gemma3n:e4b',
             temperature: 0.7,
+            // Token 제한 해제 (-1은 무제한을 의미)
+            numPredict: -1,
+            // 추가 성능 최적화 옵션들
+            numCtx: 8192,    // 컨텍스트 윈도우 크기
+            repeatPenalty: 1.1,  // 반복 방지
+            topK: 40,        // Top-K 샘플링
+            topP: 0.9,       // Top-P 샘플링
         });
     }
 
@@ -86,13 +93,20 @@ export class AiService implements OnModuleInit {
             // JSON 응답 전용 프롬프트 강화
             const enhancedPrompt = this.enhancePromptForJson(prompt);
             
-            // 옵션이 있으면 temperature 동적 설정
+            // 동적으로 Ollama 옵션 설정
+            const invokeOptions: any = {
+                // 무제한 토큰 설정
+                numPredict: -1,
+                numCtx: 8192,
+            };
+            
             if (options?.temperature !== undefined) {
                 this.ollama.temperature = options.temperature;
+                invokeOptions.temperature = options.temperature;
             }
             
-            // LangChain Ollama 사용
-            const response = await this.ollama.invoke(enhancedPrompt);
+            // LangChain Ollama 사용 (옵션 포함)
+            const response = await this.ollama.invoke(enhancedPrompt, invokeOptions);
             return response;
         } catch (error) {
             this.logger.warn(`AI generation failed: ${this.getErrorMessage(error)}`);
@@ -128,12 +142,19 @@ Remember: ONLY JSON output. NO markdown formatting.`;
         try {
             const enhancedPrompt = this.enhancePromptForJson(prompt);
             
+            // 동적으로 Ollama 옵션 설정
+            const streamOptions: any = {};
             if (options?.temperature !== undefined) {
                 this.ollama.temperature = options.temperature;
+                streamOptions.temperature = options.temperature;
             }
             
-            // LangChain의 스트림 기능 사용
-            const stream = await this.ollama.stream(enhancedPrompt);
+            // 무제한 토큰 설정 강화
+            streamOptions.numPredict = -1;
+            streamOptions.numCtx = 8192;
+            
+            // LangChain의 스트림 기능 사용 (옵션 포함)
+            const stream = await this.ollama.stream(enhancedPrompt, streamOptions);
             
             for await (const chunk of stream) {
                 yield {
