@@ -36,22 +36,37 @@ export class IntentClassifierService {
     conversationContext?: ConversationContext
   ): Promise<IntentAnalysis> {
     try {
-      const intentPrompt = await this.tcreiPromptLoader.getIntentClassificationPrompt({
-        message,
+      const contextInfo = {
         hasContext: conversationContext?.hasContext || false,
         lastRecipes: conversationContext?.lastRecipes || [],
         userReferences: conversationContext?.userReferences || []
+      };
+
+      this.logger.debug(`🔍 의도 분류 시작: "${message}"`);
+      this.logger.debug(`📋 컨텍스트 정보: ${JSON.stringify(contextInfo, null, 2)}`);
+
+      const intentPrompt = await this.tcreiPromptLoader.getIntentClassificationPrompt({
+        message,
+        ...contextInfo
       });
+      
+      this.logger.debug(`🤖 LLM 프롬프트 생성 완료 (길이: ${intentPrompt.length})`);
       
       const llmResponse = await this.aiService.generateResponse(intentPrompt, {
         temperature: 0.1
       });
 
+      this.logger.debug(`🎯 LLM 원본 응답: ${llmResponse.substring(0, 300)}...`);
+
       if (llmResponse) {
         try {
           // 마크다운 코드 블록 제거 후 JSON 파싱
           const cleanedResponse = this.cleanJsonResponse(llmResponse);
+          this.logger.debug(`🧹 정리된 JSON: ${cleanedResponse}`);
+          
           const parsed = JSON.parse(cleanedResponse);
+          this.logger.debug(`📊 파싱된 데이터: ${JSON.stringify(parsed, null, 2)}`);
+          
           const analysis: IntentAnalysis = {
             intent: this.mapIntent(parsed.intent),
             confidence: parsed.confidence || 0.7,
@@ -62,6 +77,16 @@ export class IntentClassifierService {
           };
 
           this.logger.log(`🎯 의도 분류: "${message}" → ${analysis.intent} (신뢰도: ${analysis.confidence})`);
+          this.logger.log(`💡 분류 근거: ${analysis.reasoning}`);
+          
+          if (analysis.needsAlternative) {
+            this.logger.log(`🔄 대체 레시피 필요: ${analysis.missingItems?.join(', ')}`);
+          }
+          
+          if (analysis.relatedRecipe) {
+            this.logger.log(`🍳 연관 레시피: ${analysis.relatedRecipe}`);
+          }
+          
           return analysis;
         } catch (parseError) {
           this.logger.warn('LLM 의도 분류 파싱 실패:', parseError instanceof Error ? parseError.message : 'Unknown error');
@@ -73,6 +98,7 @@ export class IntentClassifierService {
     }
 
     // 폴백: LLM 기반 분류
+    this.logger.warn(`⚠️ 주요 LLM 의도 분류 실패, 폴백 분류 시작`);
     return await this.fallbackClassification(message, conversationContext);
   }
 
@@ -116,9 +142,11 @@ export class IntentClassifierService {
 
   private async fallbackClassification(message: string, conversationContext?: ConversationContext): Promise<IntentAnalysis> {
     try {
+      this.logger.debug(`🔄 폴백 분류 시작: LLM 기반 폴백 의도 분류 시도`);
       // LLM 기반 폴백 의도 분류 시도
       const llmFallbackResult = await this.performLlmFallbackClassification(message, conversationContext);
       if (llmFallbackResult) {
+        this.logger.log(`✅ LLM 폴백 분류 성공: ${llmFallbackResult.intent}`);
         return llmFallbackResult;
       }
     } catch (error) {
@@ -126,7 +154,10 @@ export class IntentClassifierService {
     }
 
     // 최후 수단: 간소화된 키워드 기반 분류
-    return await this.performSimplifiedClassification(message, conversationContext);
+    this.logger.debug(`🎯 최후 수단: 키워드 기반 간소화 분류 시작`);
+    const result = await this.performSimplifiedClassification(message, conversationContext);
+    this.logger.log(`📝 키워드 기반 분류 결과: ${result.intent} (근거: ${result.reasoning})`);
+    return result;
   }
 
   /**

@@ -211,12 +211,25 @@ export class ElasticsearchAgentService {
 
     try {
       // 1단계: 검색 의도 분석 (전달된 의도가 없거나 recipe_detail이 아닌 경우에만)
-      const searchIntent = intentAnalysis && intentAnalysis.intent === 'recipe_detail'
-        ? { ...this.getDefaultIntent(userQuery), type: 'recipe_search' as const, reasoning: '상세 정보 요청으로 직접 검색' }
-        : await this.analyzeSearchIntent(userQuery);
+      let searchIntent: SearchIntent;
+      if (intentAnalysis && intentAnalysis.intent === 'recipe_detail') {
+        searchIntent = { ...this.getDefaultIntent(userQuery), type: 'recipe_search' as const, reasoning: '상세 정보 요청으로 직접 검색' };
+        this.logger.debug(`🎯 기본 검색 의도 사용: recipe_detail 요청으로 인해 recipe_search 적용`);
+      } else {
+        this.logger.debug(`🔍 검색 의도 분석 시작: "${userQuery}"`);
+        searchIntent = await this.analyzeSearchIntent(userQuery);
+        this.logger.debug(`📊 분석된 키워드: [${searchIntent.extractedTerms.join(', ')}]`);
+      }
+      
       this.logger.log(`🎯 검색 의도: ${searchIntent.type} (신뢰도: ${searchIntent.confidence})`);
+      this.logger.log(`💡 검색 근거: ${searchIntent.reasoning}`);
+      
+      if (Object.keys(searchIntent.filters).length > 0) {
+        this.logger.debug(`🔧 적용된 필터: ${JSON.stringify(searchIntent.filters, null, 2)}`);
+      }
 
       // 2단계: 검색 실행
+      this.logger.debug(`⚙️ Elasticsearch 검색 실행 중...`);
       const searchResult = await this.elasticsearchService.advancedSearch(userQuery, { 
         limit: 10,
         allergies: userAllergies, // 알러지 정보 전달
