@@ -15,8 +15,8 @@ jobs:
       - name: Checkout source code
         uses: actions/checkout@v3
 
-      # 2. Docker Compose로 서비스 빌드 및 실행
-      - name: Build and run services
+      # 2. 기존 컨테이너 정리 및 Docker Compose로 서비스 빌드 및 실행
+      - name: Clean up and build services
         run: |
           # GitHub Secret(ENV_FILE_BACKEND)의 내용을 .env.production 파일로 생성합니다.
           echo "${{ secrets.ENV_FILE_BACKEND }}" > ./.env.production
@@ -24,15 +24,36 @@ jobs:
           # 로그 디렉터리가 없을 경우 에러가 발생하므로 미리 생성합니다.
           mkdir -p ./logs
 
-          # Synology DSM 환경에 맞는 'docker compose' (하이픈 없음) 명령어를 사용합니다.
-          docker compose build --no-cache
+          # 이미지 버전 설정 (Git 커밋 해시 사용)
+          export IMAGE_TAG=${GITHUB_SHA:0:7}
+          echo "Building with image tag: $IMAGE_TAG"
+
+          # 기존 컨테이너 정리 (에러 무시)
+          docker stop ai-recipe-backend ollama-service 2>/dev/null || true
+          docker rm ai-recipe-backend ollama-service 2>/dev/null || true
+
+          # 기존 이미지가 있는지 확인하고, 없으면 빌드
+          if ! docker image inspect smart-recipe-backend:$IMAGE_TAG >/dev/null 2>&1; then
+            echo "Building new image: smart-recipe-backend:$IMAGE_TAG"
+            docker compose build --build-arg IMAGE_TAG=$IMAGE_TAG
+            docker tag smart-recipe-backend:latest smart-recipe-backend:$IMAGE_TAG
+          else
+            echo "Using existing image: smart-recipe-backend:$IMAGE_TAG"
+            docker tag smart-recipe-backend:$IMAGE_TAG smart-recipe-backend:latest
+          fi
+
+          # Docker Compose로 서비스 시작
+          docker compose down --remove-orphans
           docker compose up -d
+          
+          # 오래된 이미지 정리 (최근 5개 버전만 유지)
+          docker images smart-recipe-backend --format "table {{.Tag}}\t{{.CreatedAt}}" | tail -n +2 | sort -k2 -r | tail -n +6 | awk '{print $1}' | grep -v latest | xargs -r -I {} docker rmi smart-recipe-backend:{} 2>/dev/null || true
 
       # 3. 서비스 동작 확인 (테스트)
       - name: Verify service is running
         run: |
           echo "Waiting for the service to start..."
-          sleep 40 # 시작 대기 시간을 40초로 늘립니다.
+          sleep 60 # Ollama 모델 다운로드 시간 포함하여 60초로 증가
 
           echo "Checking running containers:"
           docker compose ps

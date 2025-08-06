@@ -1,4 +1,5 @@
 # 🚀 NestJS TypeScript Backend Dockerfile
+ARG IMAGE_TAG=latest
 FROM node:20-alpine AS builder
 
 # 작업 디렉토리 설정
