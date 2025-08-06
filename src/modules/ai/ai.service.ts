@@ -119,16 +119,25 @@ export class AiService implements OnModuleInit {
      * JSON 응답을 위한 프롬프트 강화
      */
     private enhancePromptForJson(prompt: string): string {
-        // JSON 응답이 필요한 프롬프트인지 확인
-        if (prompt.includes('JSON') || prompt.includes('json') || prompt.includes('{')) {
-            return `System: You must respond with ONLY valid JSON. No markdown code blocks. No explanations. No \`\`\`json or \`\`\`. Just the JSON object.
+        // JSON 응답이 필요한 프롬프트인지 확인 (더 엄격하게)
+        if (prompt.includes('JSON') || prompt.includes('json') || 
+            prompt.includes('{') || prompt.includes('응답') ||
+            prompt.includes('format') || prompt.includes('Format')) {
+            return `SYSTEM: You are a JSON-only response bot. Your response MUST be valid JSON format only.
+
+CRITICAL RULES:
+1. NO markdown formatting (no \`\`\`json, no \`\`\`)
+2. NO explanations or text outside JSON
+3. NO comments in JSON
+4. Start with { and end with }
+5. Use proper JSON syntax only
 
 ${prompt}
 
-Remember: ONLY JSON output. NO markdown formatting.`;
+IMPORTANT: Your entire response must be valid JSON that can be parsed by JSON.parse(). Nothing else.`;
         }
         
-        // URL 제약사항 추가
+        // 일반 응답에 URL 제약사항 추가
         return `${prompt}
 
 중요한 제약사항:

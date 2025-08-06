@@ -67,9 +67,21 @@ export class AlternativeRecipeGeneratorService {
         userMessage: request.userMessage
       });
       
-      const llmResponse = await this.aiService.generateResponse(prompt, {
+      // JSON 응답 강제를 위한 추가 지시사항
+      const jsonEnforcedPrompt = `${prompt}
+
+CRITICAL: Your response must be ONLY valid JSON. No markdown, no explanations, no code blocks. Start with { and end with }.`;
+
+      this.logger.debug(`🤖 대체 레시피 LLM 프롬프트 전송 중... (길이: ${jsonEnforcedPrompt.length})`);
+      
+      const llmResponse = await this.aiService.generateResponse(jsonEnforcedPrompt, {
         temperature: 0.3
       });
+
+      this.logger.debug(`📥 LLM 원본 응답 수신 (길이: ${llmResponse?.length || 0})`);
+      if (llmResponse) {
+        this.logger.debug(`📄 응답 내용 미리보기: ${llmResponse.substring(0, 200)}...`);
+      }
 
       if (llmResponse) {
         try {
@@ -118,20 +130,49 @@ export class AlternativeRecipeGeneratorService {
    * JSON 응답에서 마크다운 코드 블록 제거
    */
   private cleanJsonResponse(response: string): string {
-    // 마크다운 코드 블록 제거 (```json ... ``` 또는 ``` ... ```)
+    this.logger.debug(`🧹 JSON 정리 시작, 원본 길이: ${response.length}`);
     let cleaned = response.trim();
     
-    // ```json으로 시작하는 경우
-    if (cleaned.startsWith('```json')) {
-      cleaned = cleaned.replace(/^```json\s*/, '').replace(/\s*```$/, '');
-    }
-    // ```으로 시작하는 경우
-    else if (cleaned.startsWith('```')) {
-      cleaned = cleaned.replace(/^```\s*/, '').replace(/\s*```$/, '');
+    // 마크다운 블록 제거
+    if (cleaned.includes('```')) {
+      // ```json ... ``` 패턴 제거
+      cleaned = cleaned.replace(/^```json?\s*/i, '').replace(/\s*```$/i, '');
+      this.logger.debug('📝 마크다운 코드 블록 제거됨');
     }
     
-    // 추가 정리: 앞뒤 공백 제거
-    return cleaned.trim();
+    // ## 형태의 마크다운 헤더가 있으면 JSON 부분만 추출 시도
+    if (cleaned.includes('##') || cleaned.includes('#')) {
+      this.logger.debug('🔍 마크다운 헤더 감지, JSON 부분 추출 시도');
+      
+      // { 로 시작하는 첫 번째 JSON 객체 찾기
+      const jsonStart = cleaned.indexOf('{');
+      if (jsonStart !== -1) {
+        // 마지막 } 찾기 (간단한 매칭)
+        let braceCount = 0;
+        let jsonEnd = jsonStart;
+        
+        for (let i = jsonStart; i < cleaned.length; i++) {
+          if (cleaned[i] === '{') braceCount++;
+          if (cleaned[i] === '}') braceCount--;
+          if (braceCount === 0) {
+            jsonEnd = i;
+            break;
+          }
+        }
+        
+        if (jsonEnd > jsonStart) {
+          cleaned = cleaned.substring(jsonStart, jsonEnd + 1);
+          this.logger.debug(`✂️ JSON 객체 추출: 위치 ${jsonStart}-${jsonEnd}`);
+        }
+      }
+    }
+    
+    // 최종 정리
+    cleaned = cleaned.trim();
+    this.logger.debug(`✅ JSON 정리 완료, 정리된 길이: ${cleaned.length}`);
+    this.logger.debug(`🎯 정리된 내용 시작: ${cleaned.substring(0, 100)}...`);
+    
+    return cleaned;
   }
 
 
