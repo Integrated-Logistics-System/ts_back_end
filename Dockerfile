@@ -9,7 +9,7 @@ COPY package*.json ./
 
 # 의존성 설치 (캐시 최적화)
 # nest build를 위해 devDependencies를 포함한 모든 의존성을 설치합니다.
-RUN npm ci
+RUN npm install
 
 # 소스 코드 복사
 COPY . .
