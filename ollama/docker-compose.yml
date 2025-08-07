@@ -1,0 +1,47 @@
+# 🤖 Ollama LLM Service - Standalone Deployment
+version: '3.8'
+
+services:
+  ollama:
+    image: ollama/ollama:0.8.0
+    container_name: ollama-service
+    ports:
+      - "11434:11434"
+    volumes:
+      # 모델 데이터 영구 저장
+      - ollama-models:/root/.ollama
+      # 로컬 모델 폴더 마운트 (선택사항)
+      - ./models:/models
+    environment:
+      # Ollama 설정
+      - OLLAMA_MODELS=/root/.ollama/models
+      - OLLAMA_HOST=0.0.0.0:11434
+      - OLLAMA_ORIGINS=*
+      # GPU 설정 (NVIDIA GPU 있을 경우)
+      # - NVIDIA_VISIBLE_DEVICES=all
+    restart: unless-stopped
+    
+    # 헬스체크
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+volumes:
+  ollama-models:
+    driver: local
+
+# 🎯 사용법:
+# docker-compose up -d
+# 
+# 🔧 모델 설치:
+# docker-compose exec ollama ollama pull gemma3n:e2b
+# docker-compose exec ollama ollama pull llama3.2
+#
+# 📊 모델 목록 확인:
+# docker-compose exec ollama ollama list
+#
+# 🌐 접속:
+# http://localhost:11434 또는 http://192.168.0.112:11434
