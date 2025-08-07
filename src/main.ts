@@ -22,7 +22,7 @@ class ConfiguredIoAdapter extends IoAdapter {
       cors,
       transports: ['websocket', 'polling'],
       allowEIO3: true,
-      path: options?.path || '/socket.io/',
+      path: options?.path || process.env.WEBSOCKET_PATH || '/socket.io/',
       serveClient: options?.serveClient ?? true,
     } as ServerOptions;
 

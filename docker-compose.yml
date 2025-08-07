@@ -55,6 +55,7 @@ services:
     networks:
       - ai-recipe-network
 
+
 networks:
   ai-recipe-network:
     driver: bridge

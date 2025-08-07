@@ -8,6 +8,7 @@ import { AiModule } from '../ai/ai.module';
 import { ElasticsearchModule } from '../elasticsearch/elasticsearch.module';
 import { ElasticsearchAgentService } from './search/elasticsearch-agent';
 import { TcreiPromptLoaderService } from '../prompt-templates/tcrei/tcrei-prompt-loader.service';
+import { PromptFileLoaderService } from '../prompt-templates/tcrei/prompt-file-loader.service';
 
 @Module({
   imports: [AiModule, ElasticsearchModule],
@@ -18,6 +19,7 @@ import { TcreiPromptLoaderService } from '../prompt-templates/tcrei/tcrei-prompt
     AlternativeRecipeGeneratorService,
     LlmFallbackAnalyzerService,
     ElasticsearchAgentService,
+    PromptFileLoaderService,
     TcreiPromptLoaderService
   ],
   exports: [RecipeAgentService, ElasticsearchAgentService],

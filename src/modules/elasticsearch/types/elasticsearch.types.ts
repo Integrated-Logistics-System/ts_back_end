@@ -69,7 +69,10 @@ export interface ElasticsearchRecipe {
   updatedAt?: string;
   isAiGenerated?: boolean;
   generationTimestamp?: string;
+  generatedAt?: string;
   originalRecipeId?: string;
+  generationReason?: string;
+  generationContext?: string;
   
 }
 

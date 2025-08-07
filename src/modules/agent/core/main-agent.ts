@@ -661,7 +661,7 @@ export class RecipeAgentService {
         temperature: 0.7
       });
 
-      const message = aiResponse || await this.tcreiPromptLoader.getFallbackGeneralChatPrompt(query.message);
+      const message = aiResponse || await this.tcreiPromptLoader.getGeneralChatPrompt({ userMessage: query.message });
 
       return {
         message,
@@ -678,7 +678,7 @@ export class RecipeAgentService {
       this.logger.warn('일반 대화 AI 응답 실패, 폴백 프롬프트 사용:', error);
       
       // 폴백 프롬프트 사용
-      const fallbackMessage = await this.tcreiPromptLoader.getFallbackGeneralChatPrompt(query.message);
+      const fallbackMessage = await this.tcreiPromptLoader.getGeneralChatPrompt({ userMessage: query.message });
       
       return {
         message: fallbackMessage,

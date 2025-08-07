@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { AiService } from '../../ai/ai.service';
 import { ElasticsearchAgentService } from '../search/elasticsearch-agent';
-import { ElasticsearchRecipe, RecipeCreateInput } from '../../elasticsearch/elasticsearch.service';
+import { ElasticsearchService, ElasticsearchRecipe, RecipeCreateInput } from '../../elasticsearch/elasticsearch.service';
 import { TcreiPromptLoaderService } from '../../prompt-templates/tcrei/tcrei-prompt-loader.service';
 
 export interface AlternativeRecipeRequest {
@@ -19,6 +19,7 @@ export class AlternativeRecipeGeneratorService {
   constructor(
     private readonly aiService: AiService,
     private readonly elasticsearchAgent: ElasticsearchAgentService,
+    private readonly elasticsearchService: ElasticsearchService,
     private readonly tcreiPromptLoader: TcreiPromptLoaderService
   ) {}
 
@@ -92,23 +93,58 @@ CRITICAL: Your response must be ONLY valid JSON. No markdown, no explanations, n
           // 새로운 ID 생성
           const newId = `make_ai_${this.generatedRecipeCounter++}`;
           
-          // 기존 레시피를 기반으로 새 레시피 생성
+          // AI 응답에서 필드 추출 (새로운 JSON 구조)
+          const ingredientsKo = parsed.ingredientsKo || [];
+          const ingredients = parsed.ingredients || [];
+          const stepsKo = parsed.stepsKo || [];
+          const steps = parsed.steps || [];
+          
+          this.logger.debug(`🔍 AI 응답 구조 분석:`);
+          this.logger.debug(`  - ingredientsKo 길이: ${ingredientsKo.length}`);
+          this.logger.debug(`  - ingredients 길이: ${ingredients.length}`);
+          this.logger.debug(`  - stepsKo 길이: ${stepsKo.length}`);
+          this.logger.debug(`  - steps 길이: ${steps.length}`);
+          
+          // Elasticsearch 레시피 구조에 정확히 맞게 생성
           const alternativeRecipe: ElasticsearchRecipe = {
             ...request.originalRecipe,
             id: newId,
+            // 이름 필드들
             nameKo: parsed.nameKo || `${request.originalRecipe.nameKo} (대체 버전)`,
             name: parsed.name || `${request.originalRecipe.name} (Alternative)`,
-            descriptionKo: parsed.descriptionKo || parsed.description,
-            description: parsed.description,
-            instructionsKo: parsed.instructionsKo || parsed.instructions,
-            instructions: parsed.instructions || parsed.instructionsKo,
-            ingredientsKo: parsed.ingredientsKo || parsed.ingredients,
-            ingredients: parsed.ingredients || parsed.ingredientsKo,
+            nameEn: request.originalRecipe.nameEn || parsed.name || `${request.originalRecipe.name} (Alternative)`,
+            // 설명 필드들
+            descriptionKo: parsed.descriptionKo || `부족한 재료 대신 다른 재료를 사용한 대체 버전`,
+            description: parsed.description || `Alternative version without missing ingredients`,
+            descriptionEn: request.originalRecipe.descriptionEn || parsed.description,
+            // 재료 필드들 (정확한 구조 매핑)
+            ingredientsKo: ingredientsKo.length > 0 ? ingredientsKo : request.originalRecipe.ingredientsKo || [],
+            ingredients: ingredients.length > 0 ? ingredients : request.originalRecipe.ingredients || [],
+            ingredientsEn: request.originalRecipe.ingredientsEn || [],
+            // 요리 단계 필드들 (정확한 구조 매핑)
+            stepsKo: stepsKo.length > 0 ? stepsKo : request.originalRecipe.stepsKo || [],
+            steps: steps.length > 0 ? steps : request.originalRecipe.steps || [],
+            stepsEn: request.originalRecipe.stepsEn || [],
+            // instructions는 일부 레시피에만 있으므로 조건부 설정
+            instructionsKo: request.originalRecipe.instructionsKo || undefined,
+            instructions: request.originalRecipe.instructions || undefined,
+            instructionsEn: request.originalRecipe.instructionsEn || undefined,
+            // 계산된 필드들
+            nIngredients: ingredientsKo.length > 0 ? ingredientsKo.length : (request.originalRecipe.ingredientsKo?.length || 0),
+            nSteps: stepsKo.length > 0 ? stepsKo.length : (request.originalRecipe.stepsKo?.length || 0),
+            // 기타 메타데이터
             minutes: parsed.cookingTime || request.originalRecipe.minutes,
-            // AI 생성 레시피임을 표시하는 태그 추가
+            difficulty: parsed.difficulty || request.originalRecipe.difficulty || "보통",
+            // AI 생성 레시피임을 표시하는 태그 및 메타데이터 추가
             tags: [...(request.originalRecipe.tags || []), 'AI생성', '대체레시피'],
-            // 원본 레시피 ID 보관
-            originalRecipeId: request.originalRecipe.id
+            tagsKo: [...(request.originalRecipe.tagsKo || [])],
+            tagsEn: [...(request.originalRecipe.tagsEn || [])],
+            isAiGenerated: true,
+            generatedAt: new Date().toISOString(),
+            // 원본 레시피 ID 및 생성 이유 보관
+            originalRecipeId: request.originalRecipe.id,
+            generationReason: `부족한 재료: ${request.missingItems.join(', ')}`,
+            generationContext: request.userMessage
           };
 
           return alternativeRecipe;
@@ -211,16 +247,20 @@ CRITICAL: Your response must be ONLY valid JSON. No markdown, no explanations, n
    */
   private async saveAlternativeRecipe(recipe: ElasticsearchRecipe): Promise<void> {
     try {
-      const createInput: RecipeCreateInput = {
-        recipe: recipe,
-        validate: true
-      };
+      // ElasticsearchService의 새로운 createRecipe 메서드 사용
+      const result = await this.elasticsearchService.createRecipe(recipe);
       
-      await this.elasticsearchAgent.saveRecipe(createInput);
-      this.logger.log(`💾 대체 레시피 저장 완료: ${recipe.id}`);
+      if (result.success) {
+        this.logger.log(`💾 대체 레시피 Elasticsearch 저장 완료: ${recipe.id}`);
+        this.logger.debug(`🍳 생성된 레시피: ${recipe.nameKo || recipe.name}`);
+      } else {
+        this.logger.warn(`⚠️ 대체 레시피 저장 부분 실패: ${recipe.id}`);
+      }
+      
     } catch (error) {
-      this.logger.error(`대체 레시피 저장 실패: ${recipe.id}`, error);
-      throw error;
+      this.logger.error(`❌ 대체 레시피 Elasticsearch 저장 실패: ${recipe.id}`, error);
+      // 저장 실패해도 생성된 레시피는 반환할 수 있도록 에러를 던지지 않음
+      // 하지만 로그로 문제를 추적할 수 있도록 함
     }
   }
 

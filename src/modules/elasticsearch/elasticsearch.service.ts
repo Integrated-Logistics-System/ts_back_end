@@ -203,6 +203,86 @@ export class ElasticsearchService implements OnModuleInit {
   }
 
 
+  // ==================== Recipe Management ====================
+
+  /**
+   * 새로운 레시피를 Elasticsearch에 저장
+   */
+  async createRecipe(recipe: ElasticsearchRecipe): Promise<{ success: boolean; id: string }> {
+    this.ensureConnection();
+    
+    try {
+      const response = await this.client.index({
+        index: 'recipes',
+        id: recipe.id,
+        body: {
+          ...recipe,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        }
+      });
+      
+      // 인덱스 새로고침으로 즉시 검색 가능하도록 설정
+      await this.client.indices.refresh({ index: 'recipes' });
+      
+      this.logger.log(`✅ 레시피 저장 완료: ${recipe.id}`);
+      return { success: true, id: recipe.id };
+    } catch (error) {
+      this.logger.error(`❌ 레시피 저장 실패: ${recipe.id}`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * 레시피 업데이트
+   */
+  async updateRecipe(id: string, updates: Partial<ElasticsearchRecipe>): Promise<{ success: boolean }> {
+    this.ensureConnection();
+    
+    try {
+      await this.client.update({
+        index: 'recipes',
+        id,
+        body: {
+          doc: {
+            ...updates,
+            updatedAt: new Date().toISOString()
+          }
+        }
+      });
+      
+      await this.client.indices.refresh({ index: 'recipes' });
+      
+      this.logger.log(`✅ 레시피 업데이트 완료: ${id}`);
+      return { success: true };
+    } catch (error) {
+      this.logger.error(`❌ 레시피 업데이트 실패: ${id}`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * 레시피 삭제
+   */
+  async deleteRecipe(id: string): Promise<{ success: boolean }> {
+    this.ensureConnection();
+    
+    try {
+      await this.client.delete({
+        index: 'recipes',
+        id
+      });
+      
+      await this.client.indices.refresh({ index: 'recipes' });
+      
+      this.logger.log(`✅ 레시피 삭제 완료: ${id}`);
+      return { success: true };
+    } catch (error) {
+      this.logger.error(`❌ 레시피 삭제 실패: ${id}`, error);
+      throw error;
+    }
+  }
+
   // ==================== Statistics & Health ====================
 
   /**
