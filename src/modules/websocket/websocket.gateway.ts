@@ -527,6 +527,19 @@ export class ChatGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
           },
         };
 
+      case 'ingredient_substitute':
+      case 'INGREDIENT_SUBSTITUTE':
+        return {
+          ...baseData,
+          metadata: {
+            ...baseData.metadata,
+            conversationType: 'ingredient_substitute',
+            targetIngredient: response.metadata?.targetIngredient,
+            substitutes: response.metadata?.substitutes || [],
+            cookingTips: response.metadata?.cookingTips || [],
+          },
+        };
+
       default: // general_chat
         return {
           ...baseData,
@@ -597,6 +610,23 @@ export class ChatGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
           alternativeInfo: response.alternativeInfo || null,
         };
 
+      case 'ingredient_substitute':
+      case 'INGREDIENT_SUBSTITUTE':
+        return {
+          ...baseResponse,
+          metadata: {
+            ...baseResponse.metadata,
+            conversationType: 'ingredient_substitute',
+            targetIngredient: response.metadata?.targetIngredient,
+            substitutes: response.metadata?.substitutes || [],
+            cookingTips: response.metadata?.cookingTips || [],
+          },
+          suggestedFollowups: response.suggestions || [],
+          targetIngredient: response.metadata?.targetIngredient,
+          substitutes: response.metadata?.substitutes || [],
+          cookingTips: response.metadata?.cookingTips || [],
+        };
+
       default: // general_chat
         return {
           ...baseResponse,
@@ -622,6 +652,10 @@ export class ChatGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
       case 'recipe_request':        // 하위 호환성
       case 'ALTERNATIVE_RECIPE':
       case 'alternative_recipe':
+        this.logger.debug(`✅ intent "${intent}"를 recipe_query로 분류`);
+        return 'recipe_query';
+      case 'INGREDIENT_SUBSTITUTE':
+      case 'ingredient_substitute':
         this.logger.debug(`✅ intent "${intent}"를 recipe_query로 분류`);
         return 'recipe_query';
       case 'RECIPE_DETAIL':

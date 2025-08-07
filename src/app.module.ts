@@ -17,6 +17,9 @@ import { ElasticsearchModule } from './modules/elasticsearch/elasticsearch.modul
 // ==================== AI Domain ====================
 import { AiModule } from './modules/ai/ai.module';
 
+// ==================== LangChain Domain ====================
+import { LangChainModule } from './modules/langchain/langchain.module';
+
 // ==================== Communication Domain ====================
 import { WebsocketModule } from './modules/websocket/websocket.module';
 import { ChatModule } from './modules/chat/chat.module';
@@ -87,6 +90,18 @@ import { ChatModule } from './modules/chat/chat.module';
         model: process.env.OLLAMA_LLM_MODEL || 'gemma3n:e4b',
         timeout: 30000,
       },
+    }),
+
+    // ==================== LangChain Domain ====================
+    LangChainModule.forRoot({
+      ollama: {
+        baseUrl: process.env.OLLAMA_BASE_URL || 'http://localhost:11434',
+        model: process.env.OLLAMA_LLM_MODEL || 'gemma3n:e4b',
+        temperature: 0.7,
+        timeout: 30000,
+      },
+      enableLogging: true,
+      cacheTtl: 300000, // 5분
     }),
 
     // ==================== Communication Domain ====================

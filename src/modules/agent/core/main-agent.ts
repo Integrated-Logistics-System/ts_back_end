@@ -10,6 +10,7 @@ import { IntentClassifierService, UserIntent, IntentAnalysis } from '../classifi
 import { AlternativeRecipeGeneratorService, AlternativeRecipeRequest } from '../generation/recipe-generator';
 import { ElasticsearchAgentService } from '../search/elasticsearch-agent';
 import { TcreiPromptLoaderService } from '../../prompt-templates/tcrei/tcrei-prompt-loader.service';
+import { IngredientSubstituteService } from '../../langchain/services/ingredient-substitute.service';
 
 
 export interface AgentQuery {
@@ -30,6 +31,9 @@ export interface AgentResponse {
     confidence: number;
     responseType?: string;
     intent?: string;
+    targetIngredient?: string;
+    substitutes?: any[];
+    cookingTips?: string[];
   };
 }
 
@@ -44,7 +48,8 @@ export class RecipeAgentService {
     private readonly intentClassifierService: IntentClassifierService,
     private readonly alternativeRecipeGeneratorService: AlternativeRecipeGeneratorService,
     private readonly elasticsearchAgent: ElasticsearchAgentService,
-    private readonly tcreiPromptLoader: TcreiPromptLoaderService
+    private readonly tcreiPromptLoader: TcreiPromptLoaderService,
+    private readonly ingredientSubstituteService: IngredientSubstituteService
   ) {
     this.initializeAgent();
   }
@@ -141,6 +146,15 @@ export class RecipeAgentService {
             startTime
           );
           break;
+
+        case UserIntent.INGREDIENT_SUBSTITUTE:
+          response = await this.handleIngredientSubstituteRequest(
+            query,
+            conversationContext,
+            intentAnalysis,
+            startTime
+          );
+          break;
           
         case UserIntent.GENERAL_CHAT:
           response = await this.handleGeneralChat(query, startTime);
@@ -183,7 +197,7 @@ export class RecipeAgentService {
     const keywords = [query.message]; // 간단화
     
     // 📋 사용자 알러지 정보 조회
-    let userAllergies: string[] = query.userAllergies || [];
+    const userAllergies: string[] = query.userAllergies || [];
     
     // 사용자 ID가 있고 알러지 정보가 없는 경우, DB에서 조회 시도
     if (query.userId && userAllergies.length === 0) {
@@ -482,7 +496,7 @@ export class RecipeAgentService {
     const recipeNameToSearch = intentAnalysis.relatedRecipe || query.message;
 
     // 📋 사용자 알러지 정보 조회
-    let userAllergies: string[] = query.userAllergies || [];
+    const userAllergies: string[] = query.userAllergies || [];
     
     // 사용자 ID가 있고 알러지 정보가 없는 경우, DB에서 조회 시도
     if (query.userId && userAllergies.length === 0) {
@@ -640,6 +654,172 @@ export class RecipeAgentService {
       this.logger.error('대체 레시피 처리 실패:', error);
       return this.handleRecipeListRequest(query, conversationContext, startTime);
     }
+  }
+
+  /**
+   * 재료 대체 추천 요청 처리
+   */
+  private async handleIngredientSubstituteRequest(
+    query: AgentQuery,
+    conversationContext: ConversationContext,
+    intentAnalysis: IntentAnalysis,
+    startTime: number
+  ): Promise<AgentResponse> {
+    const toolsUsed = ['ingredient_substitute', 'ai_analysis'];
+    
+    this.logger.log(`🍖 재료 대체 요청 처리: ${intentAnalysis.targetIngredient || query.message}`);
+
+    try {
+      // 대상 재료 확인
+      const targetIngredient = intentAnalysis.targetIngredient || this.extractIngredientFromQuery(query.message);
+      
+      if (!targetIngredient) {
+        return {
+          message: '어떤 재료를 대체하고 싶으신지 구체적으로 알려주세요. 예: "양파 대신 뭘 쓸까요?"',
+          suggestions: ['재료명을 포함해서 다시 질문해주세요'],
+          metadata: {
+            processingTime: Date.now() - startTime,
+            toolsUsed,
+            confidence: 0.3,
+            responseType: 'ingredient_substitute_clarification',
+            intent: 'ingredient_substitute'
+          }
+        };
+      }
+
+      // 사용자 알러지 정보 조회
+      const userAllergies: string[] = query.userAllergies || [];
+      
+      // 대체 재료 추천 요청
+      const substituteResponse = await this.ingredientSubstituteService.getIngredientSubstitutes({
+        ingredient: targetIngredient,
+        context: this.extractCookingContext(query.message),
+        allergies: userAllergies,
+        availableIngredients: this.extractAvailableIngredients(query.message)
+      });
+
+      // 자연스러운 응답 메시지 생성
+      let responseMessage = `🍖 **${substituteResponse.originalIngredient}** 대체재 추천\n\n`;
+      
+      if (substituteResponse.substitutes.length > 0) {
+        const primarySubstitute = substituteResponse.substitutes[0]!;
+        responseMessage += `가장 추천하는 대체재는 **${primarySubstitute.name}**입니다. ${primarySubstitute.reason}\n\n`;
+        
+        if (substituteResponse.substitutes.length > 1) {
+          responseMessage += `다른 대안들:\n`;
+          substituteResponse.substitutes.slice(1).forEach((sub, index) => {
+            responseMessage += `${index + 2}. **${sub.name}** - ${sub.reason}\n`;
+          });
+        }
+        
+        if (substituteResponse.contextualAdvice) {
+          responseMessage += `\n💡 ${substituteResponse.contextualAdvice}`;
+        }
+      } else {
+        responseMessage += `죄송해요, ${targetIngredient}에 적합한 대체재를 찾지 못했습니다. 다른 재료나 더 구체적인 요리 상황을 알려주시면 도움드릴게요!`;
+      }
+
+      // 추가 제안 생성
+      const suggestions = [
+        '다른 재료 대체 문의',
+        '이 재료로 만들 수 있는 요리',
+        '비슷한 영양가의 재료 추천'
+      ];
+
+      this.logger.log(`✅ 재료 대체 추천 완료: ${substituteResponse.substitutes.length}개 옵션`);
+
+      return {
+        message: responseMessage,
+        suggestions,
+        metadata: {
+          processingTime: Date.now() - startTime,
+          toolsUsed,
+          confidence: 0.9,
+          responseType: 'ingredient_substitute',
+          intent: 'ingredient_substitute',
+          targetIngredient,
+          substitutes: substituteResponse.substitutes,
+          cookingTips: substituteResponse.cookingTips
+        }
+      };
+
+    } catch (error) {
+      this.logger.error('재료 대체 추천 처리 실패:', error);
+      
+      return {
+        message: '재료 대체 추천 중 오류가 발생했습니다. 다시 시도해주세요.',
+        suggestions: ['다른 재료로 다시 시도', '레시피 추천 받기'],
+        metadata: {
+          processingTime: Date.now() - startTime,
+          toolsUsed,
+          confidence: 0.1,
+          responseType: 'error',
+          intent: 'ingredient_substitute'
+        }
+      };
+    }
+  }
+
+  /**
+   * 쿼리에서 재료명 추출
+   */
+  private extractIngredientFromQuery(message: string): string | undefined {
+    // 일반적인 재료들
+    const commonIngredients = [
+      '닭가슴살', '돼지고기', '소고기', '양파', '마늘', '당근', '감자',
+      '토마토', '계란', '밀가루', '설탕', '소금', '후추', '간장',
+      '고추장', '된장', '참기름', '올리브오일', '버터', '치즈',
+      '브로콜리', '시금치', '배추', '무', '대파', '생강', '고추'
+    ];
+
+    // 직접 매치
+    for (const ingredient of commonIngredients) {
+      if (message.includes(ingredient)) {
+        return ingredient;
+      }
+    }
+
+    // 패턴 매칭
+    const patterns = [
+      /(\w+)\s*(없는데|없으면|대신|대체)/,
+      /(\w+)\s*뭐로/,
+      /(\w+)\s*바꿔/
+    ];
+
+    for (const pattern of patterns) {
+      const match = message.match(pattern);
+      if (match && match[1]) {
+        return match[1];
+      }
+    }
+
+    return undefined;
+  }
+
+  /**
+   * 요리 맥락 추출
+   */
+  private extractCookingContext(message: string): string | undefined {
+    if (message.includes('볶음')) return '볶음요리에';
+    if (message.includes('찌개') || message.includes('국')) return '국물요리에';
+    if (message.includes('샐러드')) return '샐러드에';
+    if (message.includes('파스타')) return '파스타에';
+    if (message.includes('구이')) return '구이요리에';
+    
+    return undefined;
+  }
+
+  /**
+   * 보유 재료 추출
+   */
+  private extractAvailableIngredients(message: string): string[] | undefined {
+    // 간단한 구현 - 확장 가능
+    if (message.includes('가지고 있는')) {
+      // 향후 더 정교한 파싱 로직 구현 가능
+      return [];
+    }
+    
+    return undefined;
   }
 
   /**

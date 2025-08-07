@@ -9,9 +9,10 @@ import { ElasticsearchModule } from '../elasticsearch/elasticsearch.module';
 import { ElasticsearchAgentService } from './search/elasticsearch-agent';
 import { TcreiPromptLoaderService } from '../prompt-templates/tcrei/tcrei-prompt-loader.service';
 import { PromptFileLoaderService } from '../prompt-templates/tcrei/prompt-file-loader.service';
+import { LangChainModule } from '../langchain/langchain.module';
 
 @Module({
-  imports: [AiModule, ElasticsearchModule],
+  imports: [AiModule, ElasticsearchModule, LangChainModule.forFeature()],
   providers: [
     RecipeAgentService,
     ConversationContextService,

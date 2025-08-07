@@ -7,6 +7,7 @@ export enum UserIntent {
   RECIPE_LIST = 'recipe_list',                 // 레시피 목록/추천 요청
   RECIPE_DETAIL = 'recipe_detail',             // 특정 레시피 상세 정보 요청
   ALTERNATIVE_RECIPE = 'alternative_recipe',   // 대체 레시피 생성 필요
+  INGREDIENT_SUBSTITUTE = 'ingredient_substitute', // 재료 대체 추천 요청
   GENERAL_CHAT = 'general_chat'                // 일반 대화
 }
 
@@ -17,6 +18,7 @@ export interface IntentAnalysis {
   needsAlternative: boolean;
   missingItems?: string[];
   relatedRecipe?: string;
+  targetIngredient?: string; // 대체할 재료명 (INGREDIENT_SUBSTITUTE용)
 }
 
 @Injectable()
@@ -73,7 +75,8 @@ export class IntentClassifierService {
             reasoning: parsed.reasoning || '의도 분석 완료',
             needsAlternative: parsed.needsAlternative || false,
             missingItems: parsed.missingItems || [],
-            relatedRecipe: parsed.relatedRecipe
+            relatedRecipe: parsed.relatedRecipe,
+            targetIngredient: parsed.targetIngredient
           };
 
           this.logger.log(`🎯 의도 분류: "${message}" → ${analysis.intent} (신뢰도: ${analysis.confidence})`);
@@ -133,6 +136,9 @@ export class IntentClassifierService {
       case 'alternative_recipe':
       case 'alternaive_recipe': // AI 오타 처리
         return UserIntent.ALTERNATIVE_RECIPE;
+      case 'ingredient_substitute':
+      case 'substitute':
+        return UserIntent.INGREDIENT_SUBSTITUTE;
       case 'general_chat':
         return UserIntent.GENERAL_CHAT;
       default:
@@ -188,7 +194,8 @@ export class IntentClassifierService {
           reasoning: parsed.reasoning || 'LLM 기반 폴백 분류',
           needsAlternative: parsed.needsAlternative || false,
           missingItems: parsed.missingItems || [],
-          relatedRecipe: parsed.relatedRecipe
+          relatedRecipe: parsed.relatedRecipe,
+          targetIngredient: parsed.targetIngredient
         };
       }
     } catch (error) {
@@ -204,6 +211,23 @@ export class IntentClassifierService {
    */
   private async performSimplifiedClassification(message: string, conversationContext?: ConversationContext): Promise<IntentAnalysis> {
     const messageLower = message.toLowerCase();
+    
+    // 재료 대체 요청 확인
+    const substituteKeywords = ['대신', '대체', '없는데', '없으면', '뭐로', '바꿔'];
+    const hasSubstituteKeyword = substituteKeywords.some(keyword => messageLower.includes(keyword));
+    
+    if (hasSubstituteKeyword) {
+      // 대상 재료 추출 시도
+      const targetIngredient = this.extractIngredientFromMessage(message);
+      
+      return {
+        intent: UserIntent.INGREDIENT_SUBSTITUTE,
+        confidence: 0.8,
+        reasoning: '재료 대체 키워드 감지',
+        needsAlternative: false,
+        targetIngredient: targetIngredient
+      };
+    }
     
     // 대체 레시피 필요한지 먼저 확인 (핵심 키워드만)
     if (conversationContext?.hasContext && conversationContext.lastRecipes.length > 0) {
@@ -228,10 +252,11 @@ export class IntentClassifierService {
 - recipe_list: 요리 추천이나 목록을 원함
 - recipe_detail: 특정 요리 만드는 방법을 원함
 - alternative_recipe: 다른 방법이나 대체재를 원함  
+- ingredient_substitute: 재료 대체 추천을 원함
 - general_chat: 일반 대화
 
 JSON 답변만 (설명 없이):
-{"intent": "분류결과", "confidence": 0.8, "reasoning": "이유", "needsAlternative": false}`;
+{"intent": "분류결과", "confidence": 0.8, "reasoning": "이유", "needsAlternative": false, "targetIngredient": "재료명"}`;
 
       const simpleResponse = await this.aiService.generateResponse(simplePrompt, {
         temperature: 0.1
@@ -246,7 +271,8 @@ JSON 답변만 (설명 없이):
           reasoning: `최종 AI 분류: ${parsed.reasoning}`,
           needsAlternative: parsed.needsAlternative || false,
           missingItems: [],
-          relatedRecipe: undefined
+          relatedRecipe: undefined,
+          targetIngredient: parsed.targetIngredient
         };
       }
     } catch (error) {
@@ -260,5 +286,40 @@ JSON 답변만 (설명 없이):
       reasoning: '모든 분류 방법 실패, 안전한 기본값으로 설정',
       needsAlternative: false
     };
+  }
+
+  /**
+   * 메시지에서 재료명 추출
+   */
+  private extractIngredientFromMessage(message: string): string | undefined {
+    // 간단한 재료 추출 로직
+    const commonIngredients = [
+      '닭가슴살', '돼지고기', '소고기', '양파', '마늘', '당근', '감자', 
+      '토마토', '계란', '밀가루', '설탕', '소금', '후추', '간장', 
+      '고추장', '된장', '참기름', '올리브오일', '버터', '치즈',
+      '브로콜리', '시금치', '배추', '무', '대파', '생강'
+    ];
+
+    for (const ingredient of commonIngredients) {
+      if (message.includes(ingredient)) {
+        return ingredient;
+      }
+    }
+
+    // 패턴 매칭으로 재료 추출 시도
+    const patterns = [
+      /(\w+)\s*(없는데|없으면|대신|대체)/,
+      /(\w+)\s*뭐로/,
+      /(\w+)\s*바꿔/
+    ];
+
+    for (const pattern of patterns) {
+      const match = message.match(pattern);
+      if (match && match[1]) {
+        return match[1];
+      }
+    }
+
+    return undefined;
   }
 }

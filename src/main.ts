@@ -36,10 +36,6 @@ async function bootstrap() {
   try {
     const app = await NestFactory.create(AppModule);
 
-    // Ollama 모델 가져오기
-    const aiService = app.get(AiService);
-    await aiService.pullModel();
-
     // WebSocket 어댑터 설정
     app.useWebSocketAdapter(new ConfiguredIoAdapter(app));
 
