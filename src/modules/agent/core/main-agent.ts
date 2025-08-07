@@ -73,7 +73,8 @@ export class RecipeAgentService {
    */
   private async waitForAiService(): Promise<void> {
     let attempts = 0;
-    const maxAttempts = 10;
+    const maxAttempts = 15; // 더 많은 재시도
+    const retryDelay = 2000; // 2초로 늘림
     
     while (attempts < maxAttempts) {
       try {
@@ -83,11 +84,11 @@ export class RecipeAgentService {
           return;
         }
       } catch (error) {
-        this.logger.warn(`AI 서비스 연결 대기 중... (${attempts + 1}/${maxAttempts})`);
+        this.logger.warn(`⏳ AI 서비스 연결 대기 중... (${attempts + 1}/${maxAttempts})`);
       }
       
       attempts++;
-      await new Promise(resolve => setTimeout(resolve, 1000)); // 1초 대기
+      await new Promise(resolve => setTimeout(resolve, retryDelay));
     }
     
     throw new Error('AI 서비스 연결 실패');

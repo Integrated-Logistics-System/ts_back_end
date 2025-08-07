@@ -44,27 +44,45 @@ export class AiService implements OnModuleInit {
     // ================== 연결 관리 ==================
 
     private async initializeConnection(): Promise<void> {
-        try {
-            // Ollama 서버 연결 테스트
-            const response = await fetch(`${this.config.url}/api/tags`);
-            if (!response.ok) {
-                throw new Error(`Ollama connection failed: ${response.status}`);
+        const maxRetries = 5;
+        const retryDelay = 3000; // 3초
+        
+        for (let attempt = 1; attempt <= maxRetries; attempt++) {
+            try {
+                this.logger.log(`🔄 Ollama 연결 시도 ${attempt}/${maxRetries}...`);
+                
+                // Ollama 서버 연결 테스트
+                const response = await fetch(`${this.config.url}/api/tags`);
+                if (!response.ok) {
+                    throw new Error(`Ollama connection failed: ${response.status}`);
+                }
+
+                // 모델 존재 확인
+                const models = await response.json() as { models: { name: string }[] };
+                const hasModel = models.models.some((m) => m.name.includes(this.config.model!));
+
+                if (!hasModel) {
+                    this.logger.warn(`Model ${this.config.model} not found, attempting to pull...`);
+                    await this.pullModel();
+                }
+
+                this.isConnected = true;
+                this.logger.log(`🤖 AI Service initialized - Model: ${this.config.model}`);
+                return; // 성공하면 함수 종료
+                
+            } catch (error: unknown) {
+                this.logger.warn(`Ollama 연결 실패 (${attempt}/${maxRetries}): ${this.getErrorMessage(error)}`);
+                
+                if (attempt === maxRetries) {
+                    this.logger.error(`❌ Ollama 연결 최종 실패 - 폴백 모드로 전환`);
+                    this.isConnected = false;
+                    return;
+                }
+                
+                // 재시도 전 대기
+                this.logger.log(`⏳ ${retryDelay/1000}초 후 재시도...`);
+                await new Promise(resolve => setTimeout(resolve, retryDelay));
             }
-
-            // 모델 존재 확인
-            const models = await response.json() as { models: { name: string }[] };
-            const hasModel = models.models.some((m) => m.name.includes(this.config.model!));
-
-            if (!hasModel) {
-                this.logger.warn(`Model ${this.config.model} not found, attempting to pull...`);
-                await this.pullModel();
-            }
-
-            this.isConnected = true;
-            this.logger.log(`🤖 AI Service initialized - Model: ${this.config.model}`);
-        } catch (error: unknown) {
-            this.logger.warn(`AI service initialization failed, using fallback mode: ${this.getErrorMessage(error)}`);
-            this.isConnected = false;
         }
     }
 
