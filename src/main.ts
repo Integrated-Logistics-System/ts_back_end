@@ -4,7 +4,6 @@ import { ValidationPipe, Logger } from '@nestjs/common';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { IoAdapter } from '@nestjs/platform-socket.io';
 import { Server, ServerOptions } from 'socket.io';
-import { AiService } from './modules/ai/ai.service';
 
 class ConfiguredIoAdapter extends IoAdapter {
   createIOServer(port: number, options?: ServerOptions): Server {
@@ -36,10 +35,6 @@ async function bootstrap() {
   try {
     const app = await NestFactory.create(AppModule);
 
-    // Ollama 모델 가져오기
-    const aiService = app.get(AiService);
-    await aiService.pullModel();
-
     // WebSocket 어댑터 설정
     app.useWebSocketAdapter(new ConfiguredIoAdapter(app));
 
@@ -65,10 +60,9 @@ async function bootstrap() {
 
     // Swagger 설정
     const config = new DocumentBuilder()
-      .setTitle('AI Chat API')
-      .setDescription('Claude Desktop style AI Chat System')
+      .setTitle('Recipe Chat API')
+      .setDescription('Simple Recipe Chat System with LangChain')
       .setVersion('1.0')
-      .addBearerAuth()
       .build();
 
     const document = SwaggerModule.createDocument(app, config);
@@ -78,10 +72,10 @@ async function bootstrap() {
     const websocketPort = process.env.WEBSOCKET_PORT || 8083;
     await app.listen(port as number);
 
-    logger.log(`🚀 AI Chat Server running on http://localhost:${port}`);
+    logger.log(`🚀 Recipe Chat Server running on http://localhost:${port}`);
     logger.log(`🔌 WebSocket Gateway running on ws://localhost:${websocketPort}`);
     logger.log(`📚 Swagger docs: http://localhost:${port}/api/docs`);
-    logger.log(`🔗 Health check: http://localhost:${port}/api/auth/health`);
+    logger.log(`🍽️ Recipe API: http://localhost:${port}/api/recipes/all`);
   } catch (error) {
     logger.error('❌ Failed to start server:', error);
     process.exit(1);

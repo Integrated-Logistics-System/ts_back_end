@@ -1,0 +1,29 @@
+name: Deploy Backend
+
+on:
+  push:
+    branches: [ "main" ]
+
+jobs:
+  deploy:
+    runs-on: self-hosted  # NAS에 Runner 설치 필요
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Deploy backend with Docker Compose
+        run: |
+          docker compose down
+          docker compose up -d --build
+        env:
+          NODE_ENV: ${{ secrets.NODE_ENV }}
+          PORT: ${{ secrets.PORT }}
+          WEBSOCKET_PORT: ${{ secrets.WEBSOCKET_PORT }}
+          WEBSOCKET_PATH: ${{ secrets.WEBSOCKET_PATH }}
+          ELASTICSEARCH_URL: ${{ secrets.ELASTICSEARCH_URL }}
+          OLLAMA_URL: ${{ secrets.OLLAMA_URL }}
+          OLLAMA_MODEL: ${{ secrets.OLLAMA_MODEL }}
+          OLLAMA_TEMPERATURE_GENERATION: ${{ secrets.OLLAMA_TEMPERATURE_GENERATION }}
+          OLLAMA_TEMPERATURE_CLASSIFICATION: ${{ secrets.OLLAMA_TEMPERATURE_CLASSIFICATION }}
+          OLLAMA_MAX_TOKENS: ${{ secrets.OLLAMA_MAX_TOKENS }}

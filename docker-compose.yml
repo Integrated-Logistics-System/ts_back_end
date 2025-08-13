@@ -1,72 +1,22 @@
-# 🤖 AI Recipe Backend - Production Deployment
-# HTTP 전용 배포 (SSL 없음)
 version: '3.8'
 
 services:
-  # 백엔드 API 서버
   backend:
-    build: .
-    image: smart-recipe-backend:latest
-    container_name: ai-recipe-backend
-    ports:
-      - "8081:8081"  # API 포트
-      - "8083:8083"  # WebSocket 포트
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: recipe-backend
+    restart: unless-stopped
     environment:
-      NODE_ENV: production
       PORT: 8081
       WEBSOCKET_PORT: 8083
-    env_file:
-      - .env.production
-    volumes:
-      # 로그 볼륨
-      - ./logs:/app/logs
-    restart: unless-stopped
-    depends_on:
-      ollama:
-        condition: service_started
+      NODE_ENV: production
+    expose:
+      - "8081"
+      - "8083"
     networks:
-      - ai-recipe-network
-    
-    # 헬스체크
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8081/api/auth/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 60s
-    
-    # 리소스 제한
-    deploy:
-      resources:
-        limits:
-          memory: 2G
-        reservations:
-          memory: 1G
-
-  # Ollama 서비스
-  ollama:
-    image: ollama/ollama:latest
-    container_name: ollama-service
-    ports:
-      - "11434:11434"
-    volumes:
-      - ollama-data:/root/.ollama
-    restart: unless-stopped
-    networks:
-      - ai-recipe-network
-
+      - recipe-network
 
 networks:
-  ai-recipe-network:
-    driver: bridge
-
-volumes:
-  ollama-data:
-
-# 🎯 사용법:
-# export GITHUB_REPOSITORY=your-org/repo-name  
-# docker-compose up -d
-
-# 🌐 접속:
-# http://server-ip:8081/api - API 엔드포인트
-# ws://server-ip:8083 - WebSocket 엔드포인트
+  recipe-network:
+    external: true

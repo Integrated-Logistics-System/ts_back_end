@@ -1,19 +1,13 @@
 import { Module } from '@nestjs/common';
-import { AuthModule } from '../auth/auth.module';
-import { UserModule } from '../user/user.module';
-import { AgentModule } from '../agent/agent.module';
-import { ChatModule } from '../chat/chat.module';
-import { AiModule } from '../ai/ai.module';
+import { LangChainModule } from '../langchain/langchain.module';
+import { RecipeModule } from '../recipe/recipe.module';
 
 import { ChatGateway } from './websocket.gateway';
 
 @Module({
   imports: [
-    AuthModule,
-    UserModule,
-    AgentModule,
-    ChatModule,
-    AiModule,
+    LangChainModule,
+    RecipeModule,
   ],
   providers: [
     ChatGateway,
