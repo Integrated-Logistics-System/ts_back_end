@@ -13,7 +13,7 @@ FROM base AS deps
 
 COPY package*.json ./
 # Legacy peer deps 옵션으로 설치
-RUN npm ci --production --legacy-peer-deps
+RUN npm install --production --legacy-peer-deps
 
 # ------------------------------
 # Build stage
@@ -21,9 +21,7 @@ RUN npm ci --production --legacy-peer-deps
 FROM base AS builder
 
 WORKDIR /app
-COPY package*.json ./
-RUN npm ci --production --legacy-peer-deps
-
+COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 RUN npm run build
 
@@ -39,8 +37,8 @@ RUN addgroup --system --gid 1001 nodejs
 RUN adduser --system --uid 1001 nestjs
 
 # Copy only necessary files
-COPY --from=deps /app/node_modules ./node_modules
 COPY --from=builder /app/dist ./dist
+COPY --from=deps /app/node_modules ./node_modules
 COPY --from=builder /app/package*.json ./
 
 USER nestjs
