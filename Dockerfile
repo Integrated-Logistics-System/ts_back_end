@@ -22,7 +22,10 @@ FROM base AS builder
 
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
-COPY . .
+COPY package*.json ./
+COPY nest-cli.json ./
+COPY tsconfig*.json ./
+COPY src ./src
 RUN npm run build
 
 # ------------------------------
@@ -38,8 +41,9 @@ RUN adduser --system --uid 1001 nestjs
 
 # Copy only necessary files
 COPY --from=builder /app/dist ./dist
-COPY --from=deps /app/node_modules ./node_modules
+COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/package*.json ./
+COPY --from=builder /app/nest-cli.json ./
 
 USER nestjs
 
