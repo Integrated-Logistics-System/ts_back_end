@@ -46,6 +46,9 @@ COPY --from=builder /app/package*.json ./
 COPY --from=builder /app/nest-cli.json ./
 COPY --from=builder /app/tsconfig*.json ./
 
+# Change ownership to nestjs user
+RUN chown -R nestjs:nodejs /app
+
 USER nestjs
 
 EXPOSE 8081
