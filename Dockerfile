@@ -1,40 +1,47 @@
 # Multi-stage build for NestJS backend
 FROM node:24-alpine AS base
 
-# Install dependencies only when needed
+# Install system deps
+RUN apk add --no-cache libc6-compat curl
+
+WORKDIR /app
+
+# ------------------------------
+# Dependencies stage
+# ------------------------------
 FROM base AS deps
-RUN apk add --no-cache libc6-compat
-WORKDIR /app
 
-# Copy package files
 COPY package*.json ./
-RUN npm ci --only=production
+# Legacy peer deps 옵션으로 설치
+RUN npm ci --production --legacy-peer-deps
 
+# ------------------------------
 # Build stage
+# ------------------------------
 FROM base AS builder
+
 WORKDIR /app
 COPY package*.json ./
-RUN npm install --production
+RUN npm ci --production --legacy-peer-deps
 
 COPY . .
 RUN npm run build
 
+# ------------------------------
 # Production stage
+# ------------------------------
 FROM base AS runner
+
 WORKDIR /app
 
 # Don't run as root
 RUN addgroup --system --gid 1001 nodejs
 RUN adduser --system --uid 1001 nestjs
 
-# Copy necessary files
+# Copy only necessary files
 COPY --from=deps /app/node_modules ./node_modules
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/package*.json ./
-COPY --from=builder /app/.env.dev ./
-
-# Copy scripts
-COPY --from=builder /app/scripts ./scripts
 
 USER nestjs
 
