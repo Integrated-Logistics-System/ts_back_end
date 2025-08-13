@@ -13,7 +13,7 @@ FROM base AS deps
 
 COPY package*.json ./
 # Legacy peer deps 옵션으로 설치
-RUN npm install --production --legacy-peer-deps
+RUN npm install
 
 # ------------------------------
 # Build stage
