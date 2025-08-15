@@ -60,7 +60,12 @@ export class ChatGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
     
     // 연결 해제 원인 분석을 위한 추가 정보
     const disconnectReason = client.disconnected ? 'already disconnected' : 'graceful disconnect';
-    this.logger.log(`📊 [${clientId}] Disconnect reason: ${disconnectReason}`);
+    this.logger.warn(`📊 [${clientId}] Disconnect reason: ${disconnectReason}`, {
+      timestamp: new Date().toISOString(),
+      socketId: clientId,
+      transport: (client as any)?.conn?.transport?.name || 'unknown',
+      readyState: (client as any)?.conn?.readyState || 'unknown'
+    });
   }
 
   /**
@@ -163,8 +168,23 @@ export class ChatGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
           
           // 10개 청크마다 연결 상태 확인 (성능 최적화)
           if (chunkCount % 10 === 0) {
-            if (!client.connected || !this.connectedClients.has(client.id)) {
-              this.logger.warn(`⚠️ [${sessionId}] Client disconnected during streaming after ${chunkCount} chunks`);
+            const isClientConnected = client.connected;
+            const isClientTracked = this.connectedClients.has(client.id);
+            
+            this.logger.debug(`🔍 [${sessionId}] Connection check at chunk ${chunkCount}:`, {
+              clientConnected: isClientConnected,
+              clientTracked: isClientTracked,
+              socketId: client.id,
+              connectedCount: this.connectedClients.size
+            });
+            
+            if (!isClientConnected || !isClientTracked) {
+              this.logger.warn(`⚠️ [${sessionId}] Client disconnected during streaming after ${chunkCount} chunks`, {
+                clientConnected: isClientConnected,
+                clientTracked: isClientTracked,
+                socketId: client.id,
+                disconnectReason: client.disconnected ? 'already_disconnected' : 'graceful_disconnect'
+              });
               break;
             }
           }
