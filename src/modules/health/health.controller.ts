@@ -1,0 +1,14 @@
+import { Controller, Get } from '@nestjs/common';
+
+@Controller('api/health')
+export class HealthController {
+  @Get()
+  getHealth() {
+    return {
+      status: 'ok',
+      timestamp: new Date().toISOString(),
+      service: 'recipe-backend',
+      version: '1.0.0',
+    };
+  }
+}

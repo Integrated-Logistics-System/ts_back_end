@@ -13,6 +13,9 @@ import { ElasticsearchModule } from './modules/elasticsearch/elasticsearch.modul
 // ==================== Communication Domain ====================
 import { WebsocketModule } from './modules/websocket/websocket.module';
 
+// ==================== Health Check ====================
+import { HealthModule } from './modules/health/health.module';
+
 @Module({
   imports: [
     // ==================== Global Configuration ====================
@@ -32,6 +35,9 @@ import { WebsocketModule } from './modules/websocket/websocket.module';
 
     // ==================== Communication Domain ====================
     WebsocketModule,
+
+    // ==================== Health Check ====================
+    HealthModule,
   ],
 })
 export class AppModule {}
