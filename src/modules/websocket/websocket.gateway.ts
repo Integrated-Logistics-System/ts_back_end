@@ -156,16 +156,18 @@ export class ChatGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
 
       // 스트리밍 청크를 단순히 전달
       for await (const chunk of streamGenerator) {
-        // 연결 상태 확인
-        if (!client.connected || !this.connectedClients.has(client.id)) {
-          this.logger.warn(`⚠️ [${sessionId}] Client disconnected during streaming after ${chunkCount} chunks`);
-          break;
-        }
-
         // 청크를 클라이언트에게 전달
         try {
           client.emit('conversation_chunk', chunk);
           chunkCount++;
+          
+          // 10개 청크마다 연결 상태 확인 (성능 최적화)
+          if (chunkCount % 10 === 0) {
+            if (!client.connected || !this.connectedClients.has(client.id)) {
+              this.logger.warn(`⚠️ [${sessionId}] Client disconnected during streaming after ${chunkCount} chunks`);
+              break;
+            }
+          }
         } catch (error) {
           this.logger.error(`❌ [${sessionId}] Error sending chunk ${chunkCount}:`, error);
           break;
