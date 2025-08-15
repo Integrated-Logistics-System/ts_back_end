@@ -10,7 +10,11 @@ class ConfiguredIoAdapter extends IoAdapter {
     const websocketPort = parseInt(process.env.WEBSOCKET_PORT || '8083', 10) || port || 8083;
     
     const cors = {
-      origin: true,
+      origin: [
+        'http://choi1994.duckdns.org',
+        'http://localhost:3000', // 개발환경
+        'http://127.0.0.1:3000', // 개발환경
+      ],
       credentials: true,
       methods: ['GET', 'POST'],
       allowedHeaders: ['Content-Type', 'Authorization'],
@@ -38,9 +42,13 @@ async function bootstrap() {
     // WebSocket 어댑터 설정
     app.useWebSocketAdapter(new ConfiguredIoAdapter(app));
 
-    // CORS 설정 - 개발 환경에서 모든 요청 허용
+    // CORS 설정 - 운영 환경에 맞게 도메인 제한
     app.enableCors({
-      origin: true, // 모든 도메인 허용
+      origin: [
+        'http://choi1994.duckdns.org',
+        'http://localhost:3000', // 개발환경
+        'http://127.0.0.1:3000', // 개발환경
+      ],
       credentials: true,
       methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS', 'HEAD'],
       allowedHeaders: ['Content-Type', 'Authorization', 'Accept', 'X-Requested-With', 'Origin'],
