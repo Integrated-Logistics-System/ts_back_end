@@ -12,6 +12,50 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Debug Environment Variables
+        run: |
+          echo "🔍 Checking environment variables..."
+          echo "Working directory: $(pwd)"
+          echo "Current user: $(whoami)"
+          echo ""
+          echo "📁 Files in current directory:"
+          ls -la
+          echo ""
+          echo "🔧 Environment variables (sanitized):"
+          echo "NODE_ENV: ${NODE_ENV:-'not set'}"
+          echo "PORT: ${PORT:-'not set'}"
+          echo "WEBSOCKET_PORT: ${WEBSOCKET_PORT:-'not set'}"
+          echo "WEBSOCKET_PATH: ${WEBSOCKET_PATH:-'not set'}"
+          echo "ELASTICSEARCH_URL: ${ELASTICSEARCH_URL:-'not set'}"
+          echo "OLLAMA_URL: ${OLLAMA_URL:-'not set'}"
+          echo "OLLAMA_MODEL: ${OLLAMA_MODEL:-'not set'}"
+          echo "OLLAMA_TEMPERATURE_GENERATION: ${OLLAMA_TEMPERATURE_GENERATION:-'not set'}"
+          echo "OLLAMA_TEMPERATURE_CLASSIFICATION: ${OLLAMA_TEMPERATURE_CLASSIFICATION:-'not set'}"
+          echo "OLLAMA_MAX_TOKENS: ${OLLAMA_MAX_TOKENS:-'not set'}"
+          echo ""
+          echo "📄 .env file content (if exists):"
+          if [ -f .env ]; then
+            echo "✅ .env file found"
+            echo "--- .env content (secrets masked) ---"
+            sed 's/=.*/=***MASKED***/' .env
+          else
+            echo "❌ .env file not found"
+          fi
+          echo ""
+          echo "🐳 Docker compose configuration check:"
+          docker compose config
+        env:
+          NODE_ENV: ${{ secrets.NODE_ENV }}
+          PORT: ${{ secrets.PORT }}
+          WEBSOCKET_PORT: ${{ secrets.WEBSOCKET_PORT }}
+          WEBSOCKET_PATH: ${{ secrets.WEBSOCKET_PATH }}
+          ELASTICSEARCH_URL: ${{ secrets.ELASTICSEARCH_URL }}
+          OLLAMA_URL: ${{ secrets.OLLAMA_URL }}
+          OLLAMA_MODEL: ${{ secrets.OLLAMA_MODEL }}
+          OLLAMA_TEMPERATURE_GENERATION: ${{ secrets.OLLAMA_TEMPERATURE_GENERATION }}
+          OLLAMA_TEMPERATURE_CLASSIFICATION: ${{ secrets.OLLAMA_TEMPERATURE_CLASSIFICATION }}
+          OLLAMA_MAX_TOKENS: ${{ secrets.OLLAMA_MAX_TOKENS }}
+
       - name: Deploy backend with Docker Compose
         run: |
           docker compose down
