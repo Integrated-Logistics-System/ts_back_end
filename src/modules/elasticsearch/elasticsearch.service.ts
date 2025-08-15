@@ -31,12 +31,32 @@ export class ElasticsearchService {
   private readonly indexName = 'recipes_new';
 
   constructor() {
-    // Elasticsearch 클라이언트 초기화
-    this.client = new Client({
-      node: process.env.ELASTICSEARCH_URL || 'http://192.168.0.112:9200',
-      requestTimeout: 10000,
-      pingTimeout: 3000,
-    });
+    // Elasticsearch URL 검증 및 기본값 설정
+    const elasticsearchUrl = process.env.ELASTICSEARCH_URL || 'http://localhost:9200';
+    
+    try {
+      // URL 형식 검증
+      new URL(elasticsearchUrl);
+      
+      // Elasticsearch 클라이언트 초기화
+      this.client = new Client({
+        node: elasticsearchUrl,
+        requestTimeout: 10000,
+        pingTimeout: 3000,
+      });
+      
+      console.log(`✅ Elasticsearch client initialized with URL: ${elasticsearchUrl}`);
+    } catch (error) {
+      console.error(`❌ Invalid Elasticsearch URL: ${elasticsearchUrl}`);
+      console.error('Using fallback configuration...');
+      
+      // 폴백 설정
+      this.client = new Client({
+        node: 'http://localhost:9200',
+        requestTimeout: 10000,
+        pingTimeout: 3000,
+      });
+    }
 
     this.logger.log('🔍 Elasticsearch 서비스 초기화 완료');
     this.checkConnection();
