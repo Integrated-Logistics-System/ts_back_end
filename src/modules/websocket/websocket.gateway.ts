@@ -11,6 +11,7 @@ import {
 import { Server, Socket } from 'socket.io';
 import { Logger } from '@nestjs/common';
 import { LangChainService, StreamingChunk } from '../langchain/langchain.service';
+import { ReactAgentService } from '../langchain/services/react-agent.service';
 import { WEBSOCKET_CONFIG } from './constants/websocket.constants';
 
 @WebSocketGateway({
@@ -32,6 +33,7 @@ export class ChatGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
 
   constructor(
     private readonly langChainService: LangChainService,
+    private readonly reactAgentService: ReactAgentService,
   ) {}
 
   afterInit(_server: Server) {
@@ -206,6 +208,79 @@ export class ChatGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
           type: 'error',
           content: '메시지 처리 중 오류가 발생했습니다.',
           sessionId,
+          timestamp: Date.now(),
+        });
+      }
+    }
+  }
+
+  /**
+   * 🧠 ReAct 스트리밍 대화 메시지 처리
+   * 단계별 추론 과정을 실시간으로 스트리밍
+   */
+  @SubscribeMessage('conversation_react_stream')
+  async handleReactConversationStream(
+    @MessageBody() data: { 
+      message: string; 
+      sessionId?: string;
+      context?: {
+        history?: Array<{ type: string; text: string; timestamp: string }>;
+        allergies?: string[];
+        cookingLevel?: string;
+      }
+    },
+    @ConnectedSocket() client: Socket,
+  ) {
+    const sessionId = data.sessionId || client.id;
+    this.logger.log(`🧠 [${sessionId}] Starting ReAct streaming conversation`);
+
+    if (!client.connected) {
+      this.logger.warn(`⚠️ [${sessionId}] Client not connected, aborting`);
+      return;
+    }
+
+    try {
+      // ReAct 에이전트 스트리밍 실행
+      const reactStreamGenerator = this.reactAgentService.executeReactStream(
+        data.message, 
+        sessionId, 
+        data.context
+      );
+
+      let chunkCount = 0;
+      const startTime = Date.now();
+
+      // ReAct 스트리밍 청크를 클라이언트에게 전달
+      for await (const chunk of reactStreamGenerator) {
+        try {
+          // ReAct 전용 이벤트로 전송
+          client.emit('react_chunk', chunk);
+          chunkCount++;
+          
+          // 연결 상태 확인
+          if (chunkCount % 5 === 0) {
+            if (!client.connected || !this.connectedClients.has(client.id)) {
+              this.logger.warn(`⚠️ [${sessionId}] Client disconnected during ReAct streaming after ${chunkCount} chunks`);
+              break;
+            }
+          }
+        } catch (error) {
+          this.logger.error(`❌ [${sessionId}] Error sending ReAct chunk ${chunkCount}:`, error);
+          break;
+        }
+      }
+
+      const processingTime = Date.now() - startTime;
+      this.logger.log(`✅ [${sessionId}] ReAct streaming completed - ${chunkCount} chunks in ${processingTime}ms`);
+
+    } catch (error) {
+      this.logger.error(`❌ [${sessionId}] ReAct streaming error:`, error);
+      
+      // 에러 청크 전송
+      if (client.connected) {
+        client.emit('react_chunk', {
+          type: 'error',
+          content: 'ReAct 처리 중 오류가 발생했습니다.',
           timestamp: Date.now(),
         });
       }

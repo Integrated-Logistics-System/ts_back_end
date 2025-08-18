@@ -43,77 +43,14 @@ export class StreamingService {
       const promptValue = await selectedPrompt.format({ message, context: contextStr });
       const stream = await this.ollama.stream(promptValue);
       
-      // <think> 태그 필터링을 위한 버퍼
-      let buffer = '';
-      let insideThinkTag = false;
-      
+      // 단순한 스트리밍 처리
       for await (const chunk of stream) {
         if (typeof chunk === 'string' && chunk.length > 0) {
-          buffer += chunk;
-          
-          // <think> 태그 처리
-          while (buffer.length > 0) {
-            if (!insideThinkTag) {
-              // <think> 태그를 찾음
-              const thinkStartIndex = buffer.indexOf('<think>');
-              if (thinkStartIndex !== -1) {
-                // <think> 태그 이전의 내용을 전송
-                if (thinkStartIndex > 0) {
-                  const contentToSend = buffer.substring(0, thinkStartIndex);
-                  yield {
-                    type: 'token',
-                    content: contentToSend,
-                  };
-                }
-                // <think> 태그 이후로 이동
-                buffer = buffer.substring(thinkStartIndex + 7); // '<think>'.length = 7
-                insideThinkTag = true;
-              } else {
-                // <think> 태그가 없으면 전체 버퍼를 전송할 수 있는지 확인
-                // 하지만 마지막에 '<', '<t', '<th' 등이 있을 수 있으므로 조심해야 함
-                let safeToSend = buffer.length;
-                const partialTags = ['<', '<t', '<th', '<thi', '<thin', '<think'];
-                for (const partial of partialTags) {
-                  if (buffer.endsWith(partial)) {
-                    safeToSend = buffer.length - partial.length;
-                    break;
-                  }
-                }
-                
-                if (safeToSend > 0) {
-                  const contentToSend = buffer.substring(0, safeToSend);
-                  yield {
-                    type: 'token',
-                    content: contentToSend,
-                  };
-                  buffer = buffer.substring(safeToSend);
-                } else {
-                  break; // 더 많은 데이터를 기다림
-                }
-              }
-            } else {
-              // </think> 태그를 찾음
-              const thinkEndIndex = buffer.indexOf('</think>');
-              if (thinkEndIndex !== -1) {
-                // </think> 태그 이후로 이동
-                buffer = buffer.substring(thinkEndIndex + 8); // '</think>'.length = 8
-                insideThinkTag = false;
-              } else {
-                // </think> 태그가 아직 없으면 버퍼를 모두 제거 (think 내용)
-                buffer = '';
-                break;
-              }
-            }
-          }
+          yield {
+            type: 'token',
+            content: chunk,
+          };
         }
-      }
-      
-      // 남은 버퍼가 있고 think 태그 안에 있지 않다면 전송
-      if (buffer.length > 0 && !insideThinkTag) {
-        yield {
-          type: 'token',
-          content: buffer,
-        };
       }
       
       const processingTime = Date.now() - startTime;
