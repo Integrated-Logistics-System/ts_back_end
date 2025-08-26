@@ -143,7 +143,7 @@ export class ChatGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
     @ConnectedSocket() client: Socket,
   ) {
     const sessionId = data.sessionId || client.id;
-    this.logger.log(`🌊 [${sessionId}] Starting streaming conversation`);
+    this.logger.log(`📥 [Backend] Received conversation_stream from [${sessionId}]: ${data.message.substring(0, 50)}...`);
 
     if (!client.connected) {
       this.logger.warn(`⚠️ [${sessionId}] Client not connected, aborting`);
@@ -165,6 +165,7 @@ export class ChatGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
       for await (const chunk of streamGenerator) {
         // 청크를 클라이언트에게 전달
         try {
+          this.logger.debug(`📤 [Backend] Sending conversation_chunk to [${sessionId}] - chunk ${chunkCount + 1}, type: ${chunk.type}`);
           client.emit('conversation_chunk', chunk);
           chunkCount++;
           
@@ -232,7 +233,7 @@ export class ChatGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
     @ConnectedSocket() client: Socket,
   ) {
     const sessionId = data.sessionId || client.id;
-    this.logger.log(`🧠 [${sessionId}] Starting ReAct streaming conversation`);
+    this.logger.log(`📥 [Backend] Received conversation_react_stream from [${sessionId}]: ${data.message.substring(0, 50)}...`);
 
     if (!client.connected) {
       this.logger.warn(`⚠️ [${sessionId}] Client not connected, aborting`);
@@ -254,6 +255,7 @@ export class ChatGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
       for await (const chunk of reactStreamGenerator) {
         try {
           // ReAct 전용 이벤트로 전송
+          this.logger.debug(`📤 [Backend] Sending react_chunk to [${sessionId}] - chunk ${chunkCount + 1}, type: ${chunk.type}`);
           client.emit('react_chunk', chunk);
           chunkCount++;
           

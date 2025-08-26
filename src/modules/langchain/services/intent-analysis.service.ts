@@ -70,11 +70,8 @@ export class IntentAnalysisService {
 
       // JSON 파싱 시도
       try {
-        // <think> 태그 제거
-        const cleanedResult = intentResult.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
-        
         // JSON 추출 (첫 번째 완전한 JSON 객체)
-        const jsonMatch = cleanedResult.match(/\{[\s\S]*?\}/);
+        const jsonMatch = intentResult.match(/\{[\s\S]*?\}/);
         if (jsonMatch) {
           const parsed = JSON.parse(jsonMatch[0]);
           const processingTime = Date.now() - startTime;

@@ -3,7 +3,6 @@ import { LangChainService } from './langchain.service';
 import { IntentAnalysisService } from './services/intent-analysis.service';
 import { StreamingService } from './services/streaming.service';
 import { RecipeSearchService } from './services/recipe-search.service';
-import { DataTransformService } from './services/data-transform.service';
 import { ReactAgentService } from './services/react-agent.service';
 import { ElasticsearchModule } from '../elasticsearch/elasticsearch.module';
 
@@ -20,7 +19,6 @@ import { ElasticsearchModule } from '../elasticsearch/elasticsearch.module';
     IntentAnalysisService,
     StreamingService,
     RecipeSearchService,
-    DataTransformService,
   ],
   exports: [
     LangChainService,
@@ -30,7 +28,6 @@ import { ElasticsearchModule } from '../elasticsearch/elasticsearch.module';
     IntentAnalysisService,
     StreamingService,
     RecipeSearchService,
-    DataTransformService,
   ],
 })
 export class LangChainModule {}

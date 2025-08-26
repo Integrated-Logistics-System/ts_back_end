@@ -2,7 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { IntentAnalysisService } from './services/intent-analysis.service';
 import { StreamingService } from './services/streaming.service';
 import { RecipeSearchService } from './services/recipe-search.service';
-import { DataTransformService } from './services/data-transform.service';
+import { RecipeTransformUtil } from './utils/recipe-transform.util';
 import { 
   StreamingChunk, 
   ConversationContext,
@@ -23,7 +23,6 @@ export class LangChainService {
     private readonly intentAnalysisService: IntentAnalysisService,
     private readonly streamingService: StreamingService,
     private readonly recipeSearchService: RecipeSearchService,
-    private readonly dataTransformService: DataTransformService,
   ) {
     this.logger.log('🎯 LangChain Orchestrator Service initialized');
   }
@@ -73,15 +72,16 @@ export class LangChainService {
             context
           );
           
-          // 5. 최종 메타데이터 구성
-          const finalMetadata = this.dataTransformService.buildStreamingMetadata({
+          // 5. 최종 메타데이터 구성 (간단화)
+          const finalMetadata = {
             intent: intentAnalysis.intent,
             confidence: intentAnalysis.confidence,
             processingTime: Date.now() - startTime,
             searchResults: searchResult.recipes.length,
-            recipes: searchResult.recipes,
-            recipeDetail: searchResult.recipeDetail
-          });
+            recipes: RecipeTransformUtil.transformRecipes(searchResult.recipes),
+            recipeDetail: searchResult.recipeDetail,
+            conversationType: 'standard' // 필수 필드 추가
+          };
 
           // 6. 최종 완료 신호 전송
           yield {
