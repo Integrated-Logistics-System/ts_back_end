@@ -74,7 +74,7 @@ export class RecipeSearchService {
    */
   async getRecipeDetailWithLLM(
     recipeId: string,
-    context?: ConversationContext
+    _context?: ConversationContext
   ): Promise<RecipeDetailResult> {
     const startTime = Date.now();
     

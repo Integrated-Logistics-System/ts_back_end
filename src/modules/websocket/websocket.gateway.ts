@@ -10,7 +10,7 @@ import {
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
 import { Logger } from '@nestjs/common';
-import { LangChainService, StreamingChunk } from '../langchain/langchain.service';
+import { LangChainService } from '../langchain/langchain.service';
 import { ReactAgentService } from '../langchain/services/react-agent.service';
 import { WEBSOCKET_CONFIG } from './constants/websocket.constants';
 

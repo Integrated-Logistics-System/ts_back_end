@@ -1,6 +1,17 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Client } from '@elastic/elasticsearch';
 
+interface ElasticsearchHit {
+  _id: string;
+  _source: ElasticsearchRecipe;
+}
+
+interface ElasticsearchResponse {
+  hits: {
+    hits: ElasticsearchHit[];
+  };
+}
+
 export interface ElasticsearchRecipe {
   id: string;
   nameKo?: string;
@@ -46,7 +57,7 @@ export class ElasticsearchService {
       });
       
       console.log(`✅ Elasticsearch client initialized with URL: ${elasticsearchUrl}`);
-    } catch (error) {
+    } catch {
       console.error(`❌ Invalid Elasticsearch URL: ${elasticsearchUrl}`);
       console.error('Using fallback configuration...');
       
@@ -59,7 +70,7 @@ export class ElasticsearchService {
     }
 
     this.logger.log('🔍 Elasticsearch 서비스 초기화 완료');
-    this.checkConnection();
+    void this.checkConnection();
   }
 
   /**
@@ -127,9 +138,9 @@ export class ElasticsearchService {
         body: searchBody,
       });
 
-      const recipes: ElasticsearchRecipe[] = response.hits.hits.map((hit: any) => ({
-        id: hit._id,
+      const recipes: ElasticsearchRecipe[] = (response as ElasticsearchResponse).hits.hits.map((hit: ElasticsearchHit) => ({
         ...hit._source,
+        id: hit._id,
       }));
 
       this.logger.log(`📋 Found ${recipes.length} recipes`);
@@ -155,8 +166,8 @@ export class ElasticsearchService {
 
       if (response.found) {
         const recipe: ElasticsearchRecipe = {
+          ...(response._source as ElasticsearchRecipe),
           id: response._id,
-          ...response._source as any,
         };
 
         this.logger.log(`✅ Recipe found: ${recipe.nameKo || recipe.nameEn}`);
@@ -194,9 +205,9 @@ export class ElasticsearchService {
         },
       });
 
-      const recipes: ElasticsearchRecipe[] = response.hits.hits.map((hit: any) => ({
-        id: hit._id,
+      const recipes: ElasticsearchRecipe[] = (response as ElasticsearchResponse).hits.hits.map((hit: ElasticsearchHit) => ({
         ...hit._source,
+        id: hit._id,
       }));
 
       this.logger.log(`📋 Found ${recipes.length} recipes in category: ${category}`);
@@ -254,9 +265,9 @@ export class ElasticsearchService {
         },
       });
 
-      const recipes: ElasticsearchRecipe[] = response.hits.hits.map((hit: any) => ({
-        id: hit._id,
+      const recipes: ElasticsearchRecipe[] = (response as ElasticsearchResponse).hits.hits.map((hit: ElasticsearchHit) => ({
         ...hit._source,
+        id: hit._id,
       }));
 
       this.logger.log(`📋 Found ${recipes.length} recipes matching ingredients`);
@@ -289,9 +300,9 @@ export class ElasticsearchService {
         },
       });
 
-      const recipes: ElasticsearchRecipe[] = response.hits.hits.map((hit: any) => ({
-        id: hit._id,
+      const recipes: ElasticsearchRecipe[] = (response as ElasticsearchResponse).hits.hits.map((hit: ElasticsearchHit) => ({
         ...hit._source,
+        id: hit._id,
       }));
 
       this.logger.log(`📋 Retrieved ${recipes.length} popular recipes`);

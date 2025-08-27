@@ -32,8 +32,8 @@ export class ReactAgentService {
    */
   async *executeReactStream(
     input: string, 
-    sessionId: string,
-    context?: ConversationContext
+    _sessionId: string,
+    _context?: ConversationContext
   ): AsyncGenerator<any, void, unknown> {
     
     let step = 0;
